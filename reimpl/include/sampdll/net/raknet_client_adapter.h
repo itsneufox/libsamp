@@ -144,6 +144,13 @@ typedef struct samp_raknet_join_profile {
 #define SAMP_RAKNET_RPC_FLAG_REMOTE_PLAYER_SYNC 0x80000000u
 
 #define SAMP_RAKNET_CLIENT_MESSAGE_RING 8u
+/*
+ * Bounded camera-position/look-at history. RakPeer::Receive() can dispatch
+ * multiple RPC callbacks before returning one packet to the outer pump, so
+ * this is deliberately a safety bound rather than a losslessness claim.
+ * Consumers diagnose any overwritten history as an event gap.
+ */
+#define SAMP_RAKNET_CAMERA_EVENT_RING 1024u
 #define SAMP_RAKNET_GIVE_WEAPON_EVENT_RING 16u
 #define SAMP_RAKNET_GIVE_MONEY_EVENT_RING 16u
 #define SAMP_RAKNET_PICKUP_EVENT_RING 64u
@@ -201,13 +208,17 @@ typedef struct samp_raknet_join_profile {
 #define SAMP_RAKNET_ACTOR_ACTION_SET_FACING 5u
 #define SAMP_RAKNET_ACTOR_ACTION_SET_POSITION 6u
 #define SAMP_RAKNET_ACTOR_ACTION_SET_HEALTH 7u
+#define SAMP_RAKNET_ACTOR_ACTION_SET_INVULNERABLE 8u
 #define SAMP_RAKNET_NAME_TAG_EVENT_RING 64u
 #define SAMP_RAKNET_DEATH_WINDOW_EVENT_RING 16u
 #define SAMP_RAKNET_DEATH_WINDOW_MAX_ENTRIES 5u
 #define SAMP_RAKNET_DEATH_WINDOW_ACTION_ADD 1u
 #define SAMP_RAKNET_DEATH_WINDOW_ACTION_CLEAR 2u
 #define SAMP_RAKNET_3D_TEXT_LABEL_EVENT_RING 128u
-#define SAMP_RAKNET_MAX_3D_TEXT_LABELS 1024u
+/* STATIC_037 + OPENMP_REF:
+ * R5 RPC 36/58 accept the combined global/player label id range [0, 0x800).
+ * Player-scoped ids occupy the upper half on the wire. */
+#define SAMP_RAKNET_MAX_3D_TEXT_LABELS 2048u
 #define SAMP_RAKNET_3D_TEXT_LABEL_TEXT_BYTES 512u
 #define SAMP_RAKNET_3D_TEXT_LABEL_ACTION_CREATE 1u
 #define SAMP_RAKNET_3D_TEXT_LABEL_ACTION_UPDATE 2u
@@ -344,6 +355,49 @@ typedef struct samp_raknet_remote_onfoot_sync {
   float move_speed[3];
   float surfing_offsets[3];
 } samp_raknet_remote_onfoot_sync;
+
+typedef struct samp_raknet_remote_vehicle_sync {
+  uint32_t seq;
+  uint16_t player_id;
+  uint16_t vehicle_id;
+  uint16_t left_right_keys;
+  uint16_t up_down_keys;
+  uint16_t keys;
+  uint16_t vehicle_health;
+  uint16_t trailer_id;
+  uint32_t hydra_thrust_angle;
+  uint8_t health;
+  uint8_t armour;
+  uint8_t current_weapon;
+  uint8_t additional_key;
+  uint8_t siren;
+  uint8_t landing_gear;
+  float rotation[4];
+  float position[3];
+  float move_speed[3];
+} samp_raknet_remote_vehicle_sync;
+
+typedef struct samp_raknet_remote_aim_sync {
+  uint32_t seq;
+  uint16_t player_id;
+  uint8_t camera_mode;
+  uint8_t zoom_weapon_state;
+  uint8_t aspect_ratio;
+  float camera_front[3];
+  float camera_position[3];
+  float aim_z;
+} samp_raknet_remote_aim_sync;
+
+typedef struct samp_raknet_remote_bullet_sync {
+  uint32_t seq;
+  uint16_t player_id;
+  uint16_t hit_id;
+  uint8_t hit_type;
+  uint8_t weapon_id;
+  float origin[3];
+  float hit_position[3];
+  float offset[3];
+} samp_raknet_remote_bullet_sync;
 
 typedef struct samp_raknet_map_icon_event {
   uint32_t seq;
@@ -601,6 +655,14 @@ typedef struct samp_raknet_given_weapon_event {
   uint32_t ammo;
 } samp_raknet_given_weapon_event;
 
+typedef struct samp_raknet_camera_event {
+  uint32_t seq;
+  uint8_t rpc_id;
+  uint8_t look_at_type;
+  uint16_t reserved;
+  float position[3];
+} samp_raknet_camera_event;
+
 typedef struct samp_raknet_give_money_event {
   uint32_t seq;
   int32_t amount;
@@ -658,6 +720,9 @@ typedef struct samp_raknet_rpc_probe_snapshot {
   uint32_t score_ping_count;
   uint32_t remote_player_event_count;
   uint32_t remote_player_sync_count;
+  uint32_t remote_vehicle_sync_count;
+  uint32_t remote_aim_sync_count;
+  uint32_t remote_bullet_sync_count;
   uint32_t map_icon_event_count;
   uint32_t gang_zone_event_count;
   uint32_t gang_zone_state_seq;
@@ -672,6 +737,7 @@ typedef struct samp_raknet_rpc_probe_snapshot {
   uint32_t pickup_event_count;
   uint32_t explosion_event_count;
   uint32_t chat_bubble_event_count;
+  uint32_t camera_event_count;
   uint32_t menu_event_seq;
   uint8_t menu_event_action;
   uint8_t menu_active;
@@ -720,6 +786,9 @@ typedef struct samp_raknet_rpc_probe_snapshot {
   uint32_t player_facing_seq;
   uint32_t player_health_seq;
   uint32_t player_controllable_seq;
+  uint32_t camera_pos_seq;
+  uint32_t camera_look_at_seq;
+  uint32_t camera_event_seq;
   uint32_t camera_behind_seq;
   uint32_t player_armour_seq;
   uint32_t player_armed_weapon_seq;
@@ -884,6 +953,9 @@ typedef struct samp_raknet_rpc_probe_snapshot {
   samp_raknet_score_ping_entry score_ping_entries[SAMP_RAKNET_SCORE_PING_MAX_ENTRIES];
   samp_raknet_remote_player_event remote_player_events[SAMP_RAKNET_REMOTE_PLAYER_EVENT_RING];
   samp_raknet_remote_onfoot_sync remote_player_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
+  samp_raknet_remote_vehicle_sync remote_vehicle_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
+  samp_raknet_remote_aim_sync remote_aim_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
+  samp_raknet_remote_bullet_sync remote_bullet_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
   samp_raknet_map_icon_event map_icon_events[SAMP_RAKNET_MAP_ICON_EVENT_RING];
   samp_raknet_gang_zone_event gang_zone_events[SAMP_RAKNET_GANG_ZONE_EVENT_RING];
   samp_raknet_gang_zone_state gang_zone_states[SAMP_RAKNET_MAX_GANG_ZONES];
@@ -892,11 +964,18 @@ typedef struct samp_raknet_rpc_probe_snapshot {
   samp_raknet_death_window_event death_window_events[SAMP_RAKNET_DEATH_WINDOW_EVENT_RING];
   samp_raknet_game_text_event game_text_events[SAMP_RAKNET_GAMETEXT_EVENT_RING];
   samp_raknet_3d_text_label_event text_label_events[SAMP_RAKNET_3D_TEXT_LABEL_EVENT_RING];
+  samp_raknet_camera_event camera_events[SAMP_RAKNET_CAMERA_EVENT_RING];
   samp_raknet_given_weapon_event given_weapon_events[SAMP_RAKNET_GIVE_WEAPON_EVENT_RING];
   samp_raknet_give_money_event give_money_events[SAMP_RAKNET_GIVE_MONEY_EVENT_RING];
   samp_raknet_pickup_event pickup_events[SAMP_RAKNET_PICKUP_EVENT_RING];
   samp_raknet_explosion_event explosion_events[SAMP_RAKNET_EXPLOSION_EVENT_RING];
   samp_raknet_chat_bubble_event chat_bubble_events[SAMP_RAKNET_CHAT_BUBBLE_EVENT_RING];
+  uint32_t widescreen_seq;
+  uint8_t widescreen_enabled;
+  /* Appended for ABI stability. STATIC_037: RPC 150 at samp.dll+0x18D00
+   * executes GTA opcode 03FD with the received uint32 level. */
+  uint32_t legacy_drunk_handling_seq;
+  uint32_t legacy_drunk_handling_level;
 } samp_raknet_rpc_probe_snapshot;
 
 /*

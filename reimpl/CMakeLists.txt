@@ -121,6 +121,7 @@ if(WIN32)
   add_library(samp SHARED
     src/dllmain.c
     src/archive/win32_archive_fs.c
+    src/actor_facing_compat.c
     src/runtime_bridge.c
     src/runtime_hook_bridge.c
     src/samp.rc
@@ -165,17 +166,42 @@ if(WIN32)
       -Wl,--heap,0x100000
       -Wl,--exclude-all-symbols
       -Wl,--gc-sections
+      -static
       -static-libgcc
       -static-libstdc++
     )
     # RakNet/C++ thread usage can pull winpthread dynamically; force static link to avoid runtime DLL dependency.
-    target_link_libraries(samp PRIVATE -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic)
+    target_link_libraries(samp PRIVATE -Wl,-Bstatic -lwinpthread)
   endif()
 endif()
 
 if(SAMPDLL_BUILD_TESTS)
   include(CTest)
   enable_testing()
+
+  add_executable(test_actor_facing_compat
+    tests/test_actor_facing_compat.c
+    src/actor_facing_compat.c
+  )
+  target_include_directories(test_actor_facing_compat
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+
+  add_test(NAME actor_facing_compat COMMAND test_actor_facing_compat)
+
+  add_executable(test_gta_quaternion_compat
+    tests/test_gta_quaternion_compat.c
+  )
+  target_include_directories(test_gta_quaternion_compat
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+  if(NOT WIN32)
+    target_link_libraries(test_gta_quaternion_compat PRIVATE m)
+  endif()
+
+  add_test(NAME gta_quaternion_compat COMMAND test_gta_quaternion_compat)
 
   add_executable(test_saa
     tests/test_saa.c
@@ -241,6 +267,18 @@ if(SAMPDLL_BUILD_TESTS)
     target_link_libraries(test_raknet_split_reassembly PRIVATE sampdll_net)
 
     add_test(NAME raknet_split_reassembly COMMAND test_raknet_split_reassembly)
+
+    add_executable(test_openmp_compressed_vector_compat
+      tests/test_openmp_compressed_vector_compat.cpp
+    )
+    target_include_directories(test_openmp_compressed_vector_compat
+      PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+    )
+    target_link_libraries(test_openmp_compressed_vector_compat PRIVATE raknet)
+
+    add_test(NAME openmp_compressed_vector_compat
+             COMMAND test_openmp_compressed_vector_compat)
 
     add_executable(test_raknet_bridge
       tests/test_raknet_bridge.c

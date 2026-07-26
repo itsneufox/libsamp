@@ -266,6 +266,28 @@ SAMP_TEXTDRAW_GTA_FONT_GRAPHICS=0
 SAMP_TEXTDRAW_GTA_FONT=0
 ```
 
+Native-Windows Wine-equivalent overlay phase:
+
+`PROBE_TRACE` + `INFERRED` + `TODO_VERIFY`: the working Wine prefix installs
+the compatibility chat/dialog overlay from `IDirect3DDevice9::EndScene`. The
+native Windows path normally uses the validated GTA HUD hook instead. Enable
+the guarded D3D9 vtable-slot hook explicitly when a comparable EndScene-phase
+run is required:
+
+```ini
+[sampdll]
+SAMPDLL_CHAT_ENDSCENE=1
+```
+
+Only `Reset` (index 16) and `EndScene` (index 42) are replaced. The native
+Windows wrapper restores these shared slots after the call, so the validated
+GTA script-text callback reasserts a slot only when it exactly matches the
+captured original pointer; foreign hooks are left untouched and D3DX resources
+are preserved. Shutdown restores each slot only when it still points to the
+replacement hook. A full device-vtable clone was rejected after a
+native-Windows probe jumped through a null method immediately after installing
+the clone.
+
 Avoid using `SAMPDLL_GRAPHICS_HOOK_POST_CALLBACK=1` with
 `SAMP_TEXTDRAW_GTA_FONT_GRAPHICS=1` for normal testing. That route calls CFont
 from the graphics callback after the original target returns and crashed in the
