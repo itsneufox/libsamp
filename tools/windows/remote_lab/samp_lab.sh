@@ -13,7 +13,8 @@ usage() {
         "Usage:" \
         "  $0 ping" \
         "  $0 screenshot [label]" \
-        "  $0 key <ENTER|ESCAPE|SPACE|UP|DOWN|LEFT|RIGHT|MODE|CLASS|KILL|QUIT|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF> [label]" \
+        "  $0 screenshot-burst <label> [count] [interval-ms]" \
+        "  $0 key <ENTER|ESCAPE|SPACE|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP> [label]" \
         "  $0 click <window-x> <window-y> [label]" \
         "  $0 start <scenario> [samp|gta] [server-host] [server-port] [nickname] [favorite-index]" \
         "  $0 collect" \
@@ -22,6 +23,7 @@ usage() {
         "  $0 probe-profile <passive|no-hooks|asset-paths|custom-object-heavy|textdraw|textdraw-verbose|textdraw-render|font5|actor|actor-heavy|rpc-gap|dialog-menu>" \
         "  $0 overlay-profile <bypass|shadow|replace>" \
         "  $0 overlay-kill <on|off>" \
+        "  $0 favorite-port <index> <expected-host> <expected-port> <new-port>" \
         "  $0 validate <local-samp.dll>" \
         "  $0 deploy <local-samp.dll> <label>" \
         "  $0 deploy-probe <local-samp_probe.asi> <label>" \
@@ -80,11 +82,31 @@ case "$command" in
         require_safe_name "$label" label
         run_agent_action screenshot -Label "$label"
         ;;
+    screenshot-burst)
+        label="${2:-}"
+        count="${3:-60}"
+        interval_ms="${4:-50}"
+        require_safe_name "$label" label
+        if [[ ! "$count" =~ ^[0-9]+$ ]] || ((count < 1 || count > 120)); then
+            printf 'Screenshot burst count must be between 1 and 120.\n' >&2
+            exit 2
+        fi
+        if [[ ! "$interval_ms" =~ ^[0-9]+$ ]] || ((interval_ms < 25 || interval_ms > 10000)); then
+            printf 'Screenshot burst interval must be between 25 and 10000 milliseconds.\n' >&2
+            exit 2
+        fi
+        wait_seconds=$(( (count * interval_ms + 999) / 1000 + 30 ))
+        run_agent_action screenshot-burst \
+            -Label "$label" \
+            -ScreenshotCount "$count" \
+            -ScreenshotIntervalMilliseconds "$interval_ms" \
+            -WaitSeconds "$wait_seconds"
+        ;;
     key)
         key="${2:-}"
         label="${3:-key}"
         case "$key" in
-            ENTER|ESCAPE|SPACE|UP|DOWN|LEFT|RIGHT|MODE|CLASS|KILL|QUIT|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF) ;;
+            ENTER|ESCAPE|SPACE|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP) ;;
             *) printf 'Unsupported key: %s\n' "$key" >&2; exit 2 ;;
         esac
         require_safe_name "$label" label
@@ -179,6 +201,31 @@ case "$command" in
             powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
             -File "${remote_scripts}\\Set-SampReKillSwitch.ps1" \
             -Root "$remote_root" -State "$state"
+        ;;
+    favorite-port)
+        favorite_index="${2:-}"
+        expected_host="${3:-}"
+        expected_port="${4:-}"
+        new_port="${5:-}"
+        if [[ ! "$favorite_index" =~ ^[0-9]+$ ]] || ((favorite_index > 100)); then
+            printf 'Favorite index must be between 0 and 100.\n' >&2
+            exit 2
+        fi
+        if [[ ! "$expected_host" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            printf 'Invalid expected host: %s\n' "$expected_host" >&2
+            exit 2
+        fi
+        for port_value in "$expected_port" "$new_port"; do
+            if [[ ! "$port_value" =~ ^[0-9]+$ ]] || ((port_value < 1 || port_value > 65535)); then
+                printf 'Ports must be between 1 and 65535.\n' >&2
+                exit 2
+            fi
+        done
+        ssh "${ssh_options[@]}" "$lab_host" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+            -File "${remote_scripts}\\Set-SampFavoritePort.ps1" \
+            -Root "$remote_root" -FavoriteIndex "$favorite_index" \
+            -ExpectedHost "$expected_host" -ExpectedPort "$expected_port" -NewPort "$new_port"
         ;;
     validate)
         candidate="${2:-}"

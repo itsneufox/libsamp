@@ -190,6 +190,19 @@ if(SAMPDLL_BUILD_TESTS)
 
   add_test(NAME actor_facing_compat COMMAND test_actor_facing_compat)
 
+  add_executable(test_gta_quaternion_compat
+    tests/test_gta_quaternion_compat.c
+  )
+  target_include_directories(test_gta_quaternion_compat
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+  if(NOT WIN32)
+    target_link_libraries(test_gta_quaternion_compat PRIVATE m)
+  endif()
+
+  add_test(NAME gta_quaternion_compat COMMAND test_gta_quaternion_compat)
+
   add_executable(test_saa
     tests/test_saa.c
   )
@@ -254,6 +267,18 @@ if(SAMPDLL_BUILD_TESTS)
     target_link_libraries(test_raknet_split_reassembly PRIVATE sampdll_net)
 
     add_test(NAME raknet_split_reassembly COMMAND test_raknet_split_reassembly)
+
+    add_executable(test_openmp_compressed_vector_compat
+      tests/test_openmp_compressed_vector_compat.cpp
+    )
+    target_include_directories(test_openmp_compressed_vector_compat
+      PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+    )
+    target_link_libraries(test_openmp_compressed_vector_compat PRIVATE raknet)
+
+    add_test(NAME openmp_compressed_vector_compat
+             COMMAND test_openmp_compressed_vector_compat)
 
     add_executable(test_raknet_bridge
       tests/test_raknet_bridge.c

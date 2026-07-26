@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("ping", "screenshot", "input", "start", "collect", "stop", "logcheck")]
+    [ValidateSet("ping", "screenshot", "screenshot-burst", "input", "start", "collect", "stop", "logcheck")]
     [string]$Action = "ping",
     [string]$Scenario = "manual",
     [ValidateSet("samp", "gta")]
@@ -9,10 +9,12 @@ param(
     [string]$Nickname = "WinDebug",
     [int]$FavoriteIndex = -1,
     [ValidateSet("key", "click")][string]$InputMode = "key",
-    [ValidateSet("ENTER", "ESCAPE", "SPACE", "UP", "DOWN", "LEFT", "RIGHT", "MODE", "CLASS", "KILL", "QUIT", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF")][string]$InputKey = "ENTER",
+    [ValidateSet("ENTER", "ESCAPE", "SPACE", "UP", "DOWN", "LEFT", "RIGHT", "FIRE", "GAS", "GASFIRE", "STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN", "MODE", "CLASS", "KILL", "QUIT", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF", "RPCLEGACYRAW", "RPCLEGACYDRUNKON", "RPCLEGACYDRUNKOFF", "SYNCFOOT", "SYNCCAR", "SYNCRUSTLER", "SYNCSTOP")][string]$InputKey = "ENTER",
     [int]$InputX = 0,
     [int]$InputY = 0,
     [string]$Label = "manual",
+    [ValidateRange(1, 120)][int]$ScreenshotCount = 60,
+    [ValidateRange(25, 10000)][int]$ScreenshotIntervalMilliseconds = 50,
     [string]$Root = "C:\samp-test",
     [int]$WaitSeconds = 20
 )
@@ -45,6 +47,8 @@ $command = [ordered]@{
     input_x = $InputX
     input_y = $InputY
     label = $Label
+    screenshot_count = $ScreenshotCount
+    screenshot_interval_ms = $ScreenshotIntervalMilliseconds
     submitted_utc = (Get-Date).ToUniversalTime().ToString("o")
     submitted_by = [Environment]::UserDomainName + "\" + [Environment]::UserName
 }

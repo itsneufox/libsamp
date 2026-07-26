@@ -42,6 +42,62 @@ function Invoke-AgentCommand {
             $path = & (Join-Path $PSScriptRoot "Capture-Screenshot.ps1") -Root $Root -Label $label
             return [pscustomobject]@{ action = $action; screenshot = $path }
         }
+        "screenshot-burst" {
+            $label = if ($Command.PSObject.Properties.Name -contains "label") {
+                [string]$Command.label
+            } else {
+                "burst"
+            }
+            $count = if ($Command.PSObject.Properties.Name -contains "screenshot_count") {
+                [int]$Command.screenshot_count
+            } else {
+                60
+            }
+            $intervalMilliseconds = if (
+                $Command.PSObject.Properties.Name -contains "screenshot_interval_ms"
+            ) {
+                [int]$Command.screenshot_interval_ms
+            } else {
+                50
+            }
+            if ($count -lt 1 -or $count -gt 120) {
+                throw "Screenshot burst count must be between 1 and 120."
+            }
+            if ($intervalMilliseconds -lt 25 -or $intervalMilliseconds -gt 10000) {
+                throw "Screenshot burst interval must be between 25 and 10000 milliseconds."
+            }
+
+            $safeLabel = ConvertTo-SampLabName -Value $label
+            $burstId = "{0}_{1}" -f (Get-Date -Format "yyyyMMdd_HHmmss_fff"), $safeLabel
+            $current = Get-SampLabCurrentRun -Root $Root
+            if ($current) {
+                $runId = [string]$current.run_id
+                $outputDirectory = Join-Path (
+                    Join-Path ([string]$current.run_dir) "screenshot_bursts"
+                ) $burstId
+            } else {
+                $runId = $null
+                $outputDirectory = Join-Path (
+                    Join-Path $Root "screenshots\bursts"
+                ) $burstId
+            }
+            $capture = & (Join-Path $PSScriptRoot "Capture-ScreenshotBurst.ps1") `
+                -Root $Root `
+                -Label $safeLabel `
+                -Count $count `
+                -IntervalMilliseconds $intervalMilliseconds `
+                -OutputDirectory $outputDirectory
+            return [pscustomobject]@{
+                action = $action
+                run_id = $runId
+                burst_id = $burstId
+                count = $capture.count
+                requested_interval_ms = $capture.requested_interval_ms
+                output_directory = $capture.output_directory
+                manifest = $capture.manifest
+                frames = @($capture.frames)
+            }
+        }
         "input" {
             $mode = if ($Command.PSObject.Properties.Name -contains "input_mode") { [string]$Command.input_mode } else { "key" }
             $key = if ($Command.PSObject.Properties.Name -contains "input_key") { [string]$Command.input_key } else { "ENTER" }

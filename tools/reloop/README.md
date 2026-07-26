@@ -28,6 +28,37 @@ RPC23 scoreboard-click work. On Wayland the second Wine window may steal
 effective focus, so companion runs are not freeze/camera evidence unless the
 primary trace proves that T and TAB became active.
 
+## Two-client sync fixture
+
+`filterscripts/sync_pair.pwn` assigns the fixed test nicknames `SyncPilot` and
+`SyncObserver`. Once both are spawned, the pilot-side control ASI can drive the
+on-foot firearm, car, and Rustler-driver scenarios:
+
+```bash
+python3 tools/reloop/sync_pair_client.py all \
+  --output artifacts/runs/<run>/sync-pilot-states.json
+```
+
+Short-lived observer effects can be sampled while the pilot input remains
+held:
+
+```bash
+python3 tools/reloop/sync_pair_client.py rustler \
+  --output artifacts/runs/<run>/sync-pilot-states.json \
+  --observer-screenshot-label rustler-fire \
+  --observer-screenshot-count 8 \
+  --observer-screenshot-interval 0.1
+```
+
+Each screenshot is taken before the pilot key is released. Labels receive a
+two-digit suffix when the count is greater than one.
+
+The observer receives a fixed server camera for comparable screenshots. Server
+markers record role spawn/streaming, player state, sampled input keys and
+movement, and ordinary firearm bullet callbacks. Rustler driver weapons do not
+produce `OnPlayerWeaponShot`; their parity verdict therefore requires an
+observer screenshot/trace in addition to the pilot key marker.
+
 Crash verdicts use a three-attempt policy by default. A single
 `PRECONNECT_CRASH` or `RUNTIME_CRASH` is retried automatically with the same
 scenario; only three consecutive crash attempts are treated as reproducible.

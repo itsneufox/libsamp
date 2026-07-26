@@ -1,7 +1,7 @@
 param(
     [string]$Root = "C:\samp-test",
     [ValidateSet("key", "click")][string]$Mode = "key",
-    [ValidateSet("ENTER", "ESCAPE", "SPACE", "UP", "DOWN", "LEFT", "RIGHT", "MODE", "CLASS", "KILL", "QUIT", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF")][string]$Key = "ENTER",
+    [ValidateSet("ENTER", "ESCAPE", "SPACE", "UP", "DOWN", "LEFT", "RIGHT", "FIRE", "GAS", "GASFIRE", "STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN", "MODE", "CLASS", "KILL", "QUIT", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF", "RPCLEGACYRAW", "RPCLEGACYDRUNKON", "RPCLEGACYDRUNKOFF", "SYNCFOOT", "SYNCCAR", "SYNCRUSTLER", "SYNCSTOP")][string]$Key = "ENTER",
     [int]$X = 0,
     [int]$Y = 0,
     [string]$Label = "input"
@@ -13,10 +13,25 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common.ps1")
 
 $gta = @(Get-Process -Name "gta_sa" -ErrorAction SilentlyContinue)
-if ($gta.Count -ne 1 -or $gta[0].MainWindowHandle -eq 0) {
+$browser = @()
+if ($gta.Count -eq 1 -and $gta[0].MainWindowHandle -ne 0) {
+    $process = $gta[0]
+} elseif (
+    ($Mode -eq "key" -and $Key -in @("ENTER", "UP", "DOWN")) -or
+    $Mode -eq "click"
+) {
+    # A manually registered browser run is the recovery path when the normal
+    # favorite-selection automation cannot launch GTA. Keep that exception
+    # deliberately narrow: list navigation plus clicks on the browser itself
+    # may target samp.exe; gameplay keys still require exactly one GTA window.
+    $browser = @(Get-Process -Name "samp" -ErrorAction SilentlyContinue)
+    if ($browser.Count -ne 1 -or $browser[0].MainWindowHandle -eq 0) {
+        throw "Exactly one interactive gta_sa.exe window, or one samp.exe browser for navigation, is required."
+    }
+    $process = $browser[0]
+} else {
     throw "Exactly one interactive gta_sa.exe window is required."
 }
-$process = $gta[0]
 if (-not ("SampTestWindowInput" -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
@@ -34,6 +49,16 @@ public static class SampTestWindowInput {
     public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")]
     public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+}
+"@
+}
+if (-not ("SampTestKeyboardInput" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class SampTestKeyboardInput {
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
 }
 "@
 }
@@ -55,6 +80,44 @@ if ($foregroundProcessId -ne $process.Id) {
 }
 
 if ($Mode -eq "key") {
+    if ($Key -eq "FIRE") {
+        [SampTestWindowInput]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 750
+        } finally {
+            [SampTestWindowInput]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        }
+    } elseif ($Key -eq "GAS") {
+        [SampTestKeyboardInput]::keybd_event(0x57, 0, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 750
+        } finally {
+            [SampTestKeyboardInput]::keybd_event(0x57, 0, 0x0002, [UIntPtr]::Zero)
+        }
+    } elseif ($Key -eq "GASFIRE") {
+        [SampTestKeyboardInput]::keybd_event(0x57, 0, 0, [UIntPtr]::Zero)
+        [SampTestWindowInput]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 750
+        } finally {
+            [SampTestWindowInput]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            [SampTestKeyboardInput]::keybd_event(0x57, 0, 0x0002, [UIntPtr]::Zero)
+        }
+    } elseif ($Key -in @("STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN")) {
+        [byte]$virtualKey = switch ($Key) {
+            "STEERLEFT" { 0x41 }
+            "STEERRIGHT" { 0x44 }
+            "BRAKE" { 0x53 }
+            "HANDBRAKE" { 0x20 }
+            "HORN" { 0x48 }
+        }
+        [SampTestKeyboardInput]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 750
+        } finally {
+            [SampTestKeyboardInput]::keybd_event($virtualKey, 0, 0x0002, [UIntPtr]::Zero)
+        }
+    } else {
     $sendKey = switch ($Key) {
         "ENTER" { "{ENTER}" }
         "ESCAPE" { "{ESC}" }
@@ -87,6 +150,13 @@ if ($Mode -eq "key") {
         "RPC176RAW" { "{F6}/rpc176raw{ENTER}" }
         "RPC178EDGE" { "{F6}/rpc178edge{ENTER}" }
         "RPC178EDGEOFF" { "{F6}/rpc178edgeoff{ENTER}" }
+        "RPCLEGACYRAW" { "{F6}/rpclegacyraw{ENTER}" }
+        "RPCLEGACYDRUNKON" { "{F6}/rpclegacydrunkon{ENTER}" }
+        "RPCLEGACYDRUNKOFF" { "{F6}/rpclegacydrunkoff{ENTER}" }
+        "SYNCFOOT" { "{F6}/syncpair onfoot{ENTER}" }
+        "SYNCCAR" { "{F6}/syncpair car{ENTER}" }
+        "SYNCRUSTLER" { "{F6}/syncpair rustler{ENTER}" }
+        "SYNCSTOP" { "{F6}/syncpair stop{ENTER}" }
     }
     $shell = New-Object -ComObject WScript.Shell
     $shell.SendKeys($sendKey)
@@ -96,6 +166,7 @@ if ($Mode -eq "key") {
         # before the server's dialog/sync timeout closes this connection.
         Start-Sleep -Milliseconds 1000
         $shell.SendKeys("{ENTER}")
+    }
     }
 } else {
     $rect = New-Object SampTestWindowInput+RECT

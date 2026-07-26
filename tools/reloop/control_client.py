@@ -125,7 +125,7 @@ def run_scenario(output_path: Path, settle: float) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["ping", "state", "scenario"])
+    parser.add_argument("command", choices=["ping", "state", "enter", "scenario"])
     parser.add_argument("--output", type=Path, default=Path("ui-interaction-states.json"))
     parser.add_argument("--settle", type=float, default=0.8)
     args = parser.parse_args()
@@ -134,7 +134,11 @@ def main() -> int:
     else:
         client = wait_for_api()
         try:
-            print(json.dumps(client.command(args.command), indent=2, sort_keys=True))
+            if args.command == "enter":
+                response = client.command("window_key", vk=13)
+            else:
+                response = client.command(args.command)
+            print(json.dumps(response, indent=2, sort_keys=True))
         finally:
             client.close()
     return 0

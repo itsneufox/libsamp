@@ -41,6 +41,7 @@ From the Linux workspace, the passwordless wrapper uses
 
 ```bash
 tools/windows/remote_lab/samp_lab.sh ping
+tools/windows/remote_lab/samp_lab.sh screenshot-burst combat-m4 60 50
 tools/windows/remote_lab/samp_lab.sh key ENTER language_english
 tools/windows/remote_lab/samp_lab.sh key ACTORS actor_cycle
 tools/windows/remote_lab/samp_lab.sh key RPC176RAW actor_position_raw
@@ -53,6 +54,7 @@ tools/windows/remote_lab/samp_lab.sh stop
 tools/windows/remote_lab/samp_lab.sh probe-profile actor-heavy
 tools/windows/remote_lab/samp_lab.sh overlay-profile shadow
 tools/windows/remote_lab/samp_lab.sh overlay-kill on
+tools/windows/remote_lab/samp_lab.sh favorite-port 3 192.168.3.181 7778 7798
 tools/windows/remote_lab/samp_lab.sh fetch-run RUN_ID /tmp/samp-runs
 ```
 
@@ -100,6 +102,15 @@ older `process_attach` blocks are not mistaken for the current run. Original
 probe output is collected from the game root as `samp_probe.root.log`, because
 `samp_probe.asi` writes next to itself rather than to `SAMPDLL_LOG_DIR`.
 
+`screenshot-burst` captures all frames inside one interactive-agent command,
+without one SSH/PowerShell round trip per frame. It accepts 1 through 120
+frames and an interval of 25 through 10000 milliseconds. Every PNG has a
+timestamp and frame index. During an active run, frames and `manifest.json`
+are written under that run's `screenshot_bursts` directory; otherwise they
+are written under `C:\samp-test\screenshots\bursts`. The completed command JSON
+also contains the manifest path, per-frame timestamps, measured capture times,
+paths, and hashes.
+
 Module inventories use Toolhelp with both `TH32CS_SNAPMODULE` and
 `TH32CS_SNAPMODULE32`; this lets the 64-bit PowerShell agent enumerate the
 32-bit GTA process, including `samp.dll` and loaded ASIs.
@@ -123,6 +134,12 @@ the overlay is absent; active profiles require an installed `samp_re.asi`.
 active run this changes the installed overlay to permanent original-trampoline
 passthrough for the rest of that process. `overlay-kill off` removes only that
 managed flag and refuses to do so while GTA/SA-MP is running.
+
+`favorite-port` changes only the little-endian port of one expected endpoint in
+the interactive user's SA-MP R5 `USERDATA.DAT`. It refuses to run while a
+GTA/SA-MP process exists, validates the header and declared endpoint count,
+requires the old host and port to match, and creates a timestamped backup
+before writing.
 
 If the game directory is protected and its existing trace files were created
 by an administrator, grant the configured interactive test user access only to

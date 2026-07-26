@@ -171,6 +171,18 @@ static void post_mouse(HWND hwnd, int x, int y, const char *action) {
   if (strcmp(action, "click") == 0) {
     PostMessageA(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, point);
     PostMessageA(hwnd, WM_LBUTTONUP, 0, point);
+  } else if (strcmp(action, "left_down") == 0) {
+    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+    PostMessageA(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, point);
+  } else if (strcmp(action, "left_up") == 0) {
+    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+    PostMessageA(hwnd, WM_LBUTTONUP, 0, point);
+  } else if (strcmp(action, "right_down") == 0) {
+    mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
+    PostMessageA(hwnd, WM_RBUTTONDOWN, MK_RBUTTON, point);
+  } else if (strcmp(action, "right_up") == 0) {
+    mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
+    PostMessageA(hwnd, WM_RBUTTONUP, 0, point);
   } else if (strcmp(action, "double_click") == 0) {
     PostMessageA(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, point);
     PostMessageA(hwnd, WM_LBUTTONUP, 0, point);

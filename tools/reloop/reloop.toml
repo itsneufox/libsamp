@@ -19,7 +19,7 @@ sha256 = "f43fea656272c9f226c6c7446ea2817af6d089695db823e1fa949b95d901a766"
 
 [run]
 host = "127.0.0.1"
-port = 7778
+port = 7798
 nickname = "ReLoop"
 group = "all"
 delay_ms = 1200
