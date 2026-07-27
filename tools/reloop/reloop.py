@@ -538,7 +538,8 @@ def install_device_helper(settings: Settings, profile: ClientProfile, artifact_d
         )
     destination = profile.gta_root / settings.device_helper_filename
     previous_hash = sha256(destination)
-    shutil.copy2(settings.device_helper_source, destination)
+    if previous_hash != settings.device_helper_sha256:
+        shutil.copy2(settings.device_helper_source, destination)
     installed_hash = sha256(destination)
     if installed_hash != settings.device_helper_sha256:
         raise ReLoopError(f"installed SkipDeviceSelection hash mismatch: {destination}")

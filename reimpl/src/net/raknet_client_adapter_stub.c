@@ -18,6 +18,12 @@ int samp_raknet_client_destroy(void *client) {
   return 0;
 }
 
+int samp_raknet_client_set_password(void *client, const char *password) {
+  (void)client;
+  (void)password;
+  return -1;
+}
+
 int samp_raknet_client_connect(void *client, const char *host, uint16_t server_port, uint16_t client_port,
                                int thread_sleep_timer) {
   (void)client;
@@ -212,10 +218,21 @@ int samp_raknet_client_send_spawn_notification_for_seq(void *client, uint32_t sp
   return -1;
 }
 
-int samp_raknet_client_send_death_notification(void *client, uint8_t death_reason, uint8_t responsible_player) {
+int samp_raknet_client_send_respawn_notification(void *client) {
+  (void)client;
+  return -1;
+}
+
+int samp_raknet_client_send_death_notification(void *client, uint8_t death_reason, uint16_t responsible_player) {
   (void)client;
   (void)death_reason;
   (void)responsible_player;
+  return -1;
+}
+
+int samp_raknet_client_send_pickup_notification(void *client, int32_t pickup_id) {
+  (void)client;
+  (void)pickup_id;
   return -1;
 }
 
@@ -246,6 +263,37 @@ int samp_raknet_client_send_aim_sync(void *client, const samp_raknet_aim_sync *s
 int samp_raknet_client_send_bullet_sync(void *client, const samp_raknet_bullet_sync *sync) {
   (void)client;
   (void)sync;
+  return -1;
+}
+
+int samp_raknet_client_send_unoccupied_sync(void *client, const samp_raknet_unoccupied_sync *sync) {
+  (void)client;
+  (void)sync;
+  return -1;
+}
+
+int samp_raknet_client_send_trailer_sync(void *client, const samp_raknet_trailer_sync *sync) {
+  (void)client;
+  (void)sync;
+  return -1;
+}
+
+int samp_raknet_client_send_passenger_sync(void *client, const samp_raknet_passenger_sync *sync) {
+  (void)client;
+  (void)sync;
+  return -1;
+}
+
+int samp_raknet_client_send_enter_vehicle(void *client, uint16_t vehicle_id, uint8_t passenger) {
+  (void)client;
+  (void)vehicle_id;
+  (void)passenger;
+  return -1;
+}
+
+int samp_raknet_client_send_exit_vehicle(void *client, uint16_t vehicle_id) {
+  (void)client;
+  (void)vehicle_id;
   return -1;
 }
 

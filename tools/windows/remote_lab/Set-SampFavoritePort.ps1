@@ -3,6 +3,7 @@ param(
     [ValidateRange(0, 100)][int]$FavoriteIndex,
     [string]$ExpectedHost,
     [ValidateRange(1, 65535)][int]$ExpectedPort,
+    [string]$NewHost = "",
     [ValidateRange(1, 65535)][int]$NewPort
 )
 
@@ -16,6 +17,12 @@ if (@(Get-SampLabProcesses).Count -gt 0) {
 }
 if ($ExpectedHost.Length -gt 253 -or $ExpectedHost -notmatch '^[A-Za-z0-9.-]+$') {
     throw "ExpectedHost contains unsupported characters."
+}
+if (-not $NewHost) {
+    $NewHost = $ExpectedHost
+}
+if ($NewHost.Length -gt 253 -or $NewHost -notmatch '^[A-Za-z0-9.-]+$') {
+    throw "NewHost contains unsupported characters."
 }
 
 $config = Get-SampLabConfig -Root $Root
@@ -54,6 +61,8 @@ for ($offset = 12; $offset -le $bytes.Length - 7; $offset++) {
     }
     $entries += [pscustomobject]@{
         host = $endpointHost
+        record_offset = $offset
+        host_length = $length
         port = $port
         port_offset = $portOffset
     }
@@ -72,14 +81,25 @@ $backupName = "USERDATA_{0}_{1}.DAT" -f (Get-Date -Format "yyyyMMdd_HHmmss"), $b
 $backupPath = Join-Path (Join-Path $Root "backups") $backupName
 Copy-Item -LiteralPath $userDataPath -Destination $backupPath
 
+$newHostBytes = [Text.Encoding]::UTF8.GetBytes($NewHost)
 $newPortBytes = [BitConverter]::GetBytes([uint16]$NewPort)
-$bytes[$entry.port_offset] = $newPortBytes[0]
-$bytes[$entry.port_offset + 1] = $newPortBytes[1]
-[IO.File]::WriteAllBytes($userDataPath, $bytes)
+$oldRecordEnd = $entry.port_offset + 2
+$newRecordEnd = $entry.record_offset + 4 + $newHostBytes.Length + 2
+$rewritten = New-Object byte[] ($bytes.Length - $entry.host_length + $newHostBytes.Length)
+[Array]::Copy($bytes, 0, $rewritten, 0, $entry.record_offset)
+$newLengthBytes = [BitConverter]::GetBytes([uint32]$newHostBytes.Length)
+[Array]::Copy($newLengthBytes, 0, $rewritten, $entry.record_offset, 4)
+[Array]::Copy($newHostBytes, 0, $rewritten, $entry.record_offset + 4, $newHostBytes.Length)
+[Array]::Copy($newPortBytes, 0, $rewritten, $newRecordEnd - 2, 2)
+[Array]::Copy($bytes, $oldRecordEnd, $rewritten, $newRecordEnd, $bytes.Length - $oldRecordEnd)
+[IO.File]::WriteAllBytes($userDataPath, $rewritten)
 
 $verify = [IO.File]::ReadAllBytes($userDataPath)
-$actualPort = [BitConverter]::ToUInt16($verify, $entry.port_offset)
-if ($actualPort -ne $NewPort) {
+$actualLength = [BitConverter]::ToUInt32($verify, $entry.record_offset)
+$actualHost = [Text.Encoding]::UTF8.GetString($verify, $entry.record_offset + 4, $actualLength)
+$actualPortOffset = $entry.record_offset + 4 + $actualLength
+$actualPort = [BitConverter]::ToUInt16($verify, $actualPortOffset)
+if ($actualHost -cne $NewHost -or $actualPort -ne $NewPort) {
     Copy-Item -LiteralPath $backupPath -Destination $userDataPath -Force
     throw "Favorite verification failed; backup restored."
 }
@@ -89,7 +109,8 @@ if ($actualPort -ne $NewPort) {
     changed_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     path = $userDataPath
     favorite_index = $FavoriteIndex
-    host = $ExpectedHost
+    host_before = $ExpectedHost
+    host_after = $actualHost
     port_before = $ExpectedPort
     port_after = $actualPort
     sha256_before = $beforeHash

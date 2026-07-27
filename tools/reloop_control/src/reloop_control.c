@@ -231,6 +231,14 @@ static void handle_command(SOCKET client, const char *line) {
     PostMessageA(hwnd, WM_KEYUP, (WPARAM)vk,
                  1 | ((LPARAM)scan << 16) | (LPARAM)0xC0000000u);
     send_json(client, "{\"ok\":true,\"event\":\"window_key\"}");
+  } else if (strcmp(command, "window_syskey") == 0) {
+    int vk = json_int(line, "vk", 0);
+    UINT scan = MapVirtualKeyA((UINT)vk, MAPVK_VK_TO_VSC);
+    LPARAM context = (LPARAM)1 | ((LPARAM)scan << 16) | (LPARAM)0x20000000u;
+    PostMessageA(hwnd, WM_SYSKEYDOWN, (WPARAM)vk, context);
+    PostMessageA(hwnd, WM_SYSKEYUP, (WPARAM)vk,
+                 context | (LPARAM)0xC0000000u);
+    send_json(client, "{\"ok\":true,\"event\":\"window_syskey\"}");
   } else if (strcmp(command, "char") == 0) {
     int code = json_int(line, "code", 0);
     PostMessageA(hwnd, WM_CHAR, (WPARAM)code, 1);

@@ -1,7 +1,7 @@
 param(
     [string]$Root = "C:\samp-test",
     [ValidateSet("key", "click")][string]$Mode = "key",
-    [ValidateSet("ENTER", "ESCAPE", "SPACE", "UP", "DOWN", "LEFT", "RIGHT", "FIRE", "GAS", "GASFIRE", "STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN", "MODE", "CLASS", "KILL", "QUIT", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF", "RPCLEGACYRAW", "RPCLEGACYDRUNKON", "RPCLEGACYDRUNKOFF", "SYNCFOOT", "SYNCCAR", "SYNCRUSTLER", "SYNCSTOP")][string]$Key = "ENTER",
+    [ValidateSet("ENTER", "ESCAPE", "SPACE", "ALTENTER", "UP", "DOWN", "LEFT", "RIGHT", "FIRE", "GAS", "GASFIRE", "STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN", "MODE", "CLASS", "KILL", "QUIT", "MENUTEST", "TPASSWORD", "TPASSWORDVALUE", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF", "RPCLEGACYRAW", "RPCLEGACYDRUNKON", "RPCLEGACYDRUNKOFF", "SYNCFOOT", "SYNCCAR", "SYNCRUSTLER", "SYNCSTOP")][string]$Key = "ENTER",
     [int]$X = 0,
     [int]$Y = 0,
     [string]$Label = "input"
@@ -117,6 +117,50 @@ if ($Mode -eq "key") {
         } finally {
             [SampTestKeyboardInput]::keybd_event($virtualKey, 0, 0x0002, [UIntPtr]::Zero)
         }
+    } elseif ($Key -eq "ALTENTER") {
+        # Fixed fullscreen/windowed transition probe.  Use real modifier state
+        # rather than a SendKeys chord so gta_sa.exe receives WM_SYSKEYUP for
+        # VK_RETURN, which is the R5-compatible replacement's guarded path.
+        [SampTestKeyboardInput]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 50
+            [SampTestKeyboardInput]::keybd_event(0x0D, 0, 0, [UIntPtr]::Zero)
+            try {
+                Start-Sleep -Milliseconds 100
+            } finally {
+                [SampTestKeyboardInput]::keybd_event(0x0D, 0, 0x0002, [UIntPtr]::Zero)
+            }
+            Start-Sleep -Milliseconds 50
+        } finally {
+            [SampTestKeyboardInput]::keybd_event(0x12, 0, 0x0002, [UIntPtr]::Zero)
+        }
+    } elseif ($Key -in @("SPACE", "UP", "DOWN", "LEFT", "RIGHT")) {
+        # PROBE_TRACE:
+        # WScript.SendKeys emits gameplay/menu keys too briefly for every
+        # DirectInput frame on the native Windows host. Hold the fixed
+        # navigation/accept allowlist across several 60 Hz frames so a missed
+        # sampler edge cannot masquerade as a client latch defect.
+        [byte]$virtualKey = switch ($Key) {
+            "SPACE" { 0x20 }
+            "UP" { 0x26 }
+            "DOWN" { 0x28 }
+            "LEFT" { 0x25 }
+            "RIGHT" { 0x27 }
+        }
+        [byte]$scanCode = switch ($Key) {
+            "SPACE" { 0x39 }
+            "UP" { 0x48 }
+            "DOWN" { 0x50 }
+            "LEFT" { 0x4B }
+            "RIGHT" { 0x4D }
+        }
+        [uint32]$keyFlags = if ($Key -eq "SPACE") { 0 } else { 0x0001 }
+        [SampTestKeyboardInput]::keybd_event($virtualKey, $scanCode, $keyFlags, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds 100
+        } finally {
+            [SampTestKeyboardInput]::keybd_event($virtualKey, $scanCode, ($keyFlags -bor 0x0002), [UIntPtr]::Zero)
+        }
     } else {
     $sendKey = switch ($Key) {
         "ENTER" { "{ENTER}" }
@@ -134,6 +178,15 @@ if ($Mode -eq "key") {
         "CLASS" { "{F4}" }
         "KILL" { "{F6}/kill{ENTER}" }
         "QUIT" { "{F6}/q{ENTER}" }
+        # Fixed stock-SA-MP CreateMenu parity fixture.
+        "MENUTEST" { "{F6}/menutest{ENTER}" }
+        # Fixed password-dialog parity fixture. Arbitrary text is deliberately
+        # still excluded from the remote command queue.
+        "TPASSWORD" { "{F6}/tpassword{ENTER}" }
+        # Fixed known value for the active password fixture. Submission remains
+        # a separate ENTER action so a screenshot can prove visual masking
+        # before the server trace asserts the unchanged RPC62 bytes.
+        "TPASSWORDVALUE" { "p4rity42" }
         # Fixed teleport actions used to stress the large object/model RPC
         # bursts on the SuperFreeroam compatibility route.
         "SFA" { "{F6}/sfa{ENTER}" }

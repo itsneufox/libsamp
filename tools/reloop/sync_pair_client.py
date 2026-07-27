@@ -510,6 +510,37 @@ def drive_scenario(
             client.key(VK_CONTROL, "up")
         time.sleep(1.0)
         sample(client, "rustler_after_fire", output)
+    elif scenario == "jetpack":
+        client.key(VK_W, "down")
+        client.key(VK_SPACE, "down")
+        try:
+            capture_observer(
+                observer_screenshot_label,
+                observer_screenshot_count,
+                observer_screenshot_interval,
+            )
+            time.sleep(action_seconds)
+        finally:
+            client.key(VK_SPACE, "up")
+            client.key(VK_W, "up")
+        time.sleep(1.0)
+        sample(client, "jetpack_after_flight", output)
+    elif scenario == "pickup":
+        capture_observer(
+            observer_screenshot_label,
+            observer_screenshot_count,
+            observer_screenshot_interval,
+        )
+        time.sleep(max(action_seconds, 1.0))
+        sample(client, "pickup_after_collect", output)
+    elif scenario == "death":
+        capture_observer(
+            observer_screenshot_label,
+            observer_screenshot_count,
+            observer_screenshot_interval,
+        )
+        time.sleep(max(action_seconds, 6.0))
+        sample(client, "death_after_respawn_window", output)
     else:
         raise ValueError(f"unsupported scenario: {scenario}")
 
@@ -526,6 +557,9 @@ def main() -> int:
             "combat",
             "car",
             "rustler",
+            "jetpack",
+            "pickup",
+            "death",
             "controls",
             "angles",
             "all",
@@ -592,7 +626,7 @@ def main() -> int:
         )
 
     if args.scenario == "all":
-        scenarios = ["onfoot", "car", "rustler"]
+        scenarios = ["onfoot", "car", "rustler", "jetpack", "pickup", "death"]
     elif args.scenario == "combat":
         scenarios = ["pistol", "m4", "sniper"]
     else:

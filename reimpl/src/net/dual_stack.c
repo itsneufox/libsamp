@@ -36,6 +36,25 @@ static HMODULE g_win32_resolver_module = NULL;
 static samp_getaddrinfo_a_fn g_win32_getaddrinfo_a = NULL;
 static samp_freeaddrinfo_fn g_win32_freeaddrinfo = NULL;
 
+enum samp_win32_runtime_state {
+  SAMP_WIN32_RUNTIME_STOPPED = 0,
+  SAMP_WIN32_RUNTIME_STARTING = 1,
+  SAMP_WIN32_RUNTIME_STARTED = 2,
+  SAMP_WIN32_RUNTIME_STOPPING = 3
+};
+
+/*
+ * PROBE_TRACE:
+ * 20260726-aim-fire-candidate recorded one successful WSAStartup followed by
+ * three WSACleanup calls; the last failed with WSAENOTINITIALISED.
+ *
+ * This module owns one process-global, idempotent WSAStartup registration.
+ * Repeated callers do not acquire additional registrations. Shutdown consumes
+ * that registration at most once and returns to STOPPED so a later lifecycle
+ * can initialize Winsock again.
+ */
+static LONG g_win32_runtime_state = SAMP_WIN32_RUNTIME_STOPPED;
+
 static int ensure_win32_resolver(void) {
   LONG state = InterlockedCompareExchange(&g_win32_resolver_state, 0, 0);
   HMODULE module_handle = NULL;
@@ -212,14 +231,25 @@ int samp_net_parse_hostport(const char *input, uint16_t default_port, samp_endpo
 
 int samp_net_runtime_init(void) {
 #ifdef _WIN32
-  static int initialized = 0;
-  WSADATA wsa_data;
-  if (!initialized) {
-    int rc = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-    if (rc != 0) {
-      return -1;
+  for (;;) {
+    LONG state = InterlockedCompareExchange(&g_win32_runtime_state, SAMP_WIN32_RUNTIME_STOPPED,
+                                            SAMP_WIN32_RUNTIME_STOPPED);
+
+    if (state == SAMP_WIN32_RUNTIME_STARTED) {
+      return 0;
     }
-    initialized = 1;
+
+    if (state == SAMP_WIN32_RUNTIME_STOPPED &&
+        InterlockedCompareExchange(&g_win32_runtime_state, SAMP_WIN32_RUNTIME_STARTING,
+                                   SAMP_WIN32_RUNTIME_STOPPED) == SAMP_WIN32_RUNTIME_STOPPED) {
+      WSADATA wsa_data;
+      int rc = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+      InterlockedExchange(&g_win32_runtime_state,
+                          (rc == 0) ? SAMP_WIN32_RUNTIME_STARTED : SAMP_WIN32_RUNTIME_STOPPED);
+      return (rc == 0) ? 0 : -1;
+    }
+
+    Sleep(0);
   }
 #endif
   return 0;
@@ -227,7 +257,24 @@ int samp_net_runtime_init(void) {
 
 void samp_net_runtime_shutdown(void) {
 #ifdef _WIN32
-  WSACleanup();
+  for (;;) {
+    LONG state = InterlockedCompareExchange(&g_win32_runtime_state, SAMP_WIN32_RUNTIME_STOPPED,
+                                            SAMP_WIN32_RUNTIME_STOPPED);
+
+    if (state == SAMP_WIN32_RUNTIME_STOPPED || state == SAMP_WIN32_RUNTIME_STOPPING) {
+      return;
+    }
+
+    if (state == SAMP_WIN32_RUNTIME_STARTED &&
+        InterlockedCompareExchange(&g_win32_runtime_state, SAMP_WIN32_RUNTIME_STOPPING,
+                                   SAMP_WIN32_RUNTIME_STARTED) == SAMP_WIN32_RUNTIME_STARTED) {
+      (void)WSACleanup();
+      InterlockedExchange(&g_win32_runtime_state, SAMP_WIN32_RUNTIME_STOPPED);
+      return;
+    }
+
+    Sleep(0);
+  }
 #endif
 }
 

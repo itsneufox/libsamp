@@ -30,7 +30,7 @@ yet been reconstructed.
 | `fpslimit` | Set frame limiter, original accepted 20-90 | Implemented with an EndScene pacing fallback (`INFERRED`) |
 | `pagesize` | Set chat lines, original accepted 10-20 | Implemented; the overlay retains 20 lines and displays the selected tail |
 | `fontsize` | Set chat font adjustment, original accepted -3 through 5 | Implemented for the replacement chat fonts |
-| `nametagstatus` | Toggle name-tag status display | Partially implemented; gates the replacement health/armour status bars (`INFERRED`, `TODO_VERIFY`) |
+| `nametagstatus` | Toggle remote inactive/player-status glyph | Implemented with the original `SAMPAUX3` C/E composite and 1500/3000 ms derived cadence; final placement/runtime transition parity remains `TODO_VERIFY` |
 | `timestamp` | Toggle chat timestamps | Implemented |
 | `headmove` | Toggle remote head movement | Command/state implemented; remote head animation itself remains `TODO_VERIFY` |
 | `hudscalefix` | Toggle HUD scale fix | Not implemented |
@@ -88,7 +88,7 @@ their direct callees:
 | `headmove` | `samp.dll+0x68960` | Toggle and original confirmation text; remote head animation is not reconstructed yet |
 | `rs` | `samp.dll+0x68B80` | Appends the original compact formats shown below |
 | `interior` | `samp.dll+0x68FD0` | Executes GTA opcode `0x077E` and prints `Current Interior: %u` |
-| `nametagstatus` | `samp.dll+0x68720`, callee `+0x8E90` | Preserves the name and gates the replacement status bars; original AFK/status-icon parity remains open |
+| `nametagstatus` | `samp.dll+0x68720`, callee `+0x8E90` | Toggles only the remote state-2 glyph; name and health/armour remain visible. Fonts/glyphs are `STATIC_037`; replacement state mapping and final placement remain `TODO_VERIFY` |
 
 `/rs` uses the original module-relative output names and formats:
 

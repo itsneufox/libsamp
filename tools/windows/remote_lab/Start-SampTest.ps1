@@ -100,6 +100,15 @@ $logStates = @(
     Get-SampLabFileState `
         -Path (Join-Path $gameDir "samp_re.log") `
         -CollectName "samp_re.root.log"
+    # Some launcher paths do not propagate SAMPDLL_LOG_DIR into gta_sa.exe.
+    # Keep the replacement's writable-directory path as the primary source,
+    # but also snapshot its module/current-directory fallbacks so a native
+    # Windows run cannot silently lose the evidence needed for triage.
+    foreach ($name in @("samp_runtime.log", "samp_net_trace.log", "samp_hook_trace.log")) {
+        Get-SampLabFileState `
+            -Path (Join-Path $gameDir $name) `
+            -CollectName (($name -replace "\.log$", "") + ".root.log")
+    }
 )
 $launchName = if ($Target -eq "gta") { [string]$config.game_exe } else { [string]$config.launcher_exe }
 $launchPath = Join-Path $gameDir $launchName
@@ -194,6 +203,12 @@ if ($Target -eq "samp" -and $ServerHost) {
     }
 
     $shell = New-Object -ComObject WScript.Shell
+    # PROBE_TRACE:
+    # The Windows 11 Start menu can retain foreground ownership across the
+    # interactive agent's launch. Escape dismisses it without affecting the
+    # selected SA-MP favorite, after which AppActivate is deterministic.
+    $shell.SendKeys("{ESC}")
+    Start-Sleep -Milliseconds 200
     if (-not $shell.AppActivate($process.Id)) {
         throw "Could not activate the SA-MP browser window."
     }
@@ -260,6 +275,22 @@ public static class SampBrowserMouse {
     if ($commandLine -notlike "*$expectedHost*" -or $commandLine -notlike "*$expectedPort*") {
         Stop-Process -Id $gta.Id -Force -ErrorAction SilentlyContinue
         throw "Selected favorite launched an unexpected endpoint. Expected $ServerHost`:$ServerPort, got: $commandLine"
+    }
+}
+if ($Target -eq "gta") {
+    $deadline = (Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 200
+        $process.Refresh()
+    } while ($process.MainWindowHandle -eq 0 -and -not $process.HasExited -and (Get-Date) -lt $deadline)
+    if ($process.HasExited -or $process.MainWindowHandle -eq 0) {
+        throw "GTA did not expose an interactive window."
+    }
+    $shell = New-Object -ComObject WScript.Shell
+    $shell.SendKeys("{ESC}")
+    Start-Sleep -Milliseconds 200
+    if (-not $shell.AppActivate($process.Id)) {
+        throw "Could not activate the GTA window."
     }
 }
 $state = [ordered]@{

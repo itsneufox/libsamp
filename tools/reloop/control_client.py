@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 TOKEN = "reloop-local-v1"
+VK_DOWN = 0x28
+VK_F8 = 0x77
+VK_RETURN = 0x0D
+VK_SPACE = 0x20
 
 
 class ControlClient:
@@ -62,6 +66,16 @@ def sample(client: ControlClient, label: str, output: list[dict[str, Any]]) -> d
     return state
 
 
+def chat_command(client: ControlClient, command: str) -> None:
+    """Submit one command through the same WM_CHAR path as original SA-MP."""
+    client.command("char", code=ord("t"))
+    time.sleep(0.3)
+    for character in command:
+        client.command("char", code=ord(character))
+        time.sleep(0.04)
+    client.command("window_key", vk=VK_RETURN)
+
+
 def run_scenario(output_path: Path, settle: float) -> None:
     states: list[dict[str, Any]] = []
     client = wait_for_api()
@@ -86,6 +100,24 @@ def run_scenario(output_path: Path, settle: float) -> None:
         client.command("window_key", vk=13)
         time.sleep(settle)
         sample(client, "chat_closed", states)
+
+        # Legacy CreateMenu: the server fixture mirrors the stock 0.3.7
+        # menutest.pwn. Capture the visible GTA panel, move one row through
+        # GTA's own input path, then require its RPC132 selection callback.
+        chat_command(client, "/menutest")
+        time.sleep(max(1.0, settle))
+        sample(client, "legacy_menu_open", states)
+        client.key(VK_F8, "tap")
+        time.sleep(0.4)
+        client.key(VK_DOWN, "tap")
+        time.sleep(settle)
+        sample(client, "legacy_menu_row_1", states)
+        # STATIC_037: CMenuPool::Process selects on CPad ButtonCross
+        # (index 16, default keyboard binding SPACE). Enter/F is
+        # ButtonTriangle/index 15 and therefore sends RPC140 MenuQuit.
+        client.key(VK_SPACE, "tap")
+        time.sleep(max(1.0, settle))
+        sample(client, "legacy_menu_closed", states)
 
         # Scoreboard: TAB owns mouse/input; first player row is centered below header.
         client.key(9, "down")
@@ -125,17 +157,37 @@ def run_scenario(output_path: Path, settle: float) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["ping", "state", "enter", "scenario"])
+    parser.add_argument(
+        "command",
+        choices=["ping", "state", "enter", "alt-enter", "chat", "type", "type-enter", "scenario"],
+    )
     parser.add_argument("--output", type=Path, default=Path("ui-interaction-states.json"))
     parser.add_argument("--settle", type=float, default=0.8)
+    parser.add_argument(
+        "--text",
+        help="chat text, or raw WM_CHAR text submitted with type/type-enter",
+    )
     args = parser.parse_args()
     if args.command == "scenario":
         run_scenario(args.output, args.settle)
     else:
+        if args.command in {"chat", "type", "type-enter"} and not args.text:
+            parser.error(f"--text is required for the {args.command} command")
         client = wait_for_api()
         try:
             if args.command == "enter":
                 response = client.command("window_key", vk=13)
+            elif args.command == "alt-enter":
+                response = client.command("window_syskey", vk=13)
+            elif args.command == "chat":
+                chat_command(client, args.text)
+                response = {"ok": True, "event": "chat", "text": args.text}
+            elif args.command == "type-enter":
+                client.text(args.text)
+                response = client.command("window_key", vk=VK_RETURN)
+            elif args.command == "type":
+                client.text(args.text)
+                response = {"ok": True, "event": "type", "text": args.text}
             else:
                 response = client.command(args.command)
             print(json.dumps(response, indent=2, sort_keys=True))

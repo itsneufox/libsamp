@@ -14,7 +14,7 @@ usage() {
         "  $0 ping" \
         "  $0 screenshot [label]" \
         "  $0 screenshot-burst <label> [count] [interval-ms]" \
-        "  $0 key <ENTER|ESCAPE|SPACE|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP> [label]" \
+        "  $0 key <ENTER|ESCAPE|SPACE|ALTENTER|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|MENUTEST|TPASSWORD|TPASSWORDVALUE|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP> [label]" \
         "  $0 click <window-x> <window-y> [label]" \
         "  $0 start <scenario> [samp|gta] [server-host] [server-port] [nickname] [favorite-index]" \
         "  $0 collect" \
@@ -24,6 +24,7 @@ usage() {
         "  $0 overlay-profile <bypass|shadow|replace>" \
         "  $0 overlay-kill <on|off>" \
         "  $0 favorite-port <index> <expected-host> <expected-port> <new-port>" \
+        "  $0 favorite-endpoint <index> <expected-host> <expected-port> <new-host> <new-port>" \
         "  $0 validate <local-samp.dll>" \
         "  $0 deploy <local-samp.dll> <label>" \
         "  $0 deploy-probe <local-samp_probe.asi> <label>" \
@@ -106,7 +107,7 @@ case "$command" in
         key="${2:-}"
         label="${3:-key}"
         case "$key" in
-            ENTER|ESCAPE|SPACE|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP) ;;
+            ENTER|ESCAPE|SPACE|ALTENTER|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|MENUTEST|TPASSWORD|TPASSWORDVALUE|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP) ;;
             *) printf 'Unsupported key: %s\n' "$key" >&2; exit 2 ;;
         esac
         require_safe_name "$label" label
@@ -226,6 +227,37 @@ case "$command" in
             -File "${remote_scripts}\\Set-SampFavoritePort.ps1" \
             -Root "$remote_root" -FavoriteIndex "$favorite_index" \
             -ExpectedHost "$expected_host" -ExpectedPort "$expected_port" -NewPort "$new_port"
+        ;;
+    favorite-endpoint)
+        favorite_index="${2:-}"
+        expected_host="${3:-}"
+        expected_port="${4:-}"
+        new_host="${5:-}"
+        new_port="${6:-}"
+        if [[ ! "$favorite_index" =~ ^[0-9]+$ ]] || ((favorite_index > 100)); then
+            printf 'Favorite index must be between 0 and 100.\n' >&2
+            exit 2
+        fi
+        if [[ ! "$expected_port" =~ ^[0-9]+$ ]] || ((expected_port < 1 || expected_port > 65535)); then
+            printf 'Expected port must be between 1 and 65535.\n' >&2
+            exit 2
+        fi
+        if [[ ! "$new_port" =~ ^[0-9]+$ ]] || ((new_port < 1 || new_port > 65535)); then
+            printf 'New port must be between 1 and 65535.\n' >&2
+            exit 2
+        fi
+        for host in "$expected_host" "$new_host"; do
+            if [[ ! "$host" =~ ^[A-Za-z0-9.-]+$ ]] || ((${#host} > 253)); then
+                printf 'Host contains unsupported characters: %s\n' "$host" >&2
+                exit 2
+            fi
+        done
+        ssh "${ssh_options[@]}" "$lab_host" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+            -File "${remote_scripts}\\Set-SampFavoritePort.ps1" \
+            -Root "$remote_root" -FavoriteIndex "$favorite_index" \
+            -ExpectedHost "$expected_host" -ExpectedPort "$expected_port" \
+            -NewHost "$new_host" -NewPort "$new_port"
         ;;
     validate)
         candidate="${2:-}"

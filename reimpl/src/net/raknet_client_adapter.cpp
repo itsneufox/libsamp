@@ -4,6 +4,7 @@
 #include "death_message_codec.h"
 #include "openmp_compressed_vector_compat.h"
 #include "raknet_client_adapter_internal.h"
+#include "raknet_offline_status_observer.h"
 
 #include <cstdarg>
 #include <cmath>
@@ -40,11 +41,16 @@ constexpr unsigned char kPacketRconCommand = 201u;
 constexpr unsigned char kPacketAimSync = 203u;
 constexpr unsigned char kPacketBulletSync = 206u;
 constexpr unsigned char kPacketPlayerSync = 207u;
+constexpr unsigned char kPacketUnoccupiedSync = 209u;
+constexpr unsigned char kPacketTrailerSync = 210u;
+constexpr unsigned char kPacketPassengerSync = 211u;
 constexpr unsigned char kPacketSpectatorSync = 212u;
 constexpr RakNet::RPCID kRpcClientJoin = static_cast<RakNet::RPCID>(25u);
+constexpr RakNet::RPCID kRpcEnterVehicle = static_cast<RakNet::RPCID>(26u);
 constexpr RakNet::RPCID kRpcDialogResponse = static_cast<RakNet::RPCID>(62u);
 constexpr RakNet::RPCID kRpcSpawn = static_cast<RakNet::RPCID>(52u);
 constexpr RakNet::RPCID kRpcDeath = static_cast<RakNet::RPCID>(53u);
+constexpr RakNet::RPCID kRpcPickedUpPickup = static_cast<RakNet::RPCID>(131u);
 constexpr RakNet::RPCID kRpcServerCommand = static_cast<RakNet::RPCID>(50u);
 constexpr RakNet::RPCID kRpcChat = static_cast<RakNet::RPCID>(101u);
 constexpr RakNet::RPCID kRpcClientCheck = static_cast<RakNet::RPCID>(103u);
@@ -59,6 +65,7 @@ constexpr RakNet::RPCID kRpcEditObject = static_cast<RakNet::RPCID>(117u);
 constexpr unsigned int kRpcScrDialogBox = 61U;
 constexpr RakNet::RPCID kRpcRequestClass = static_cast<RakNet::RPCID>(128u);
 constexpr RakNet::RPCID kRpcRequestSpawn = static_cast<RakNet::RPCID>(129u);
+constexpr RakNet::RPCID kRpcExitVehicle = static_cast<RakNet::RPCID>(154u);
 constexpr RakNet::RPCID kRpcUpdateScoresPingsIPs = static_cast<RakNet::RPCID>(155u);
 constexpr unsigned int kDefaultNetgameVersion = 4057u;
 constexpr unsigned char kDefaultModByte = 1u;
@@ -114,6 +121,38 @@ static_assert(sizeof(samp_raknet_onfoot_sync) == 68U, "SA-MP 0.3.7 on-foot sync 
 static_assert(sizeof(samp_raknet_incar_sync) == 63U, "SA-MP 0.3.7 in-car sync payload must be 63 bytes");
 static_assert(sizeof(samp_raknet_aim_sync) == 31U, "SA-MP 0.3.7 aim sync payload must be 31 bytes");
 static_assert(sizeof(samp_raknet_bullet_sync) == 40U, "SA-MP 0.3.7 bullet sync payload must be 40 bytes");
+static_assert(sizeof(samp_raknet_unoccupied_sync) == 67U,
+              "SA-MP 0.3.7 unoccupied sync payload must be 67 bytes");
+static_assert(offsetof(samp_raknet_unoccupied_sync, seat_id) == 2U,
+              "SA-MP 0.3.7 unoccupied seat ABI offset");
+static_assert(offsetof(samp_raknet_unoccupied_sync, roll) == 3U,
+              "SA-MP 0.3.7 unoccupied roll ABI offset");
+static_assert(offsetof(samp_raknet_unoccupied_sync, rotation) == 15U,
+              "SA-MP 0.3.7 unoccupied rotation ABI offset");
+static_assert(offsetof(samp_raknet_unoccupied_sync, position) == 27U,
+              "SA-MP 0.3.7 unoccupied position ABI offset");
+static_assert(offsetof(samp_raknet_unoccupied_sync, move_speed) == 39U,
+              "SA-MP 0.3.7 unoccupied velocity ABI offset");
+static_assert(offsetof(samp_raknet_unoccupied_sync, turn_speed) == 51U,
+              "SA-MP 0.3.7 unoccupied angular velocity ABI offset");
+static_assert(offsetof(samp_raknet_unoccupied_sync, vehicle_health) == 63U,
+              "SA-MP 0.3.7 unoccupied health ABI offset");
+static_assert(sizeof(samp_raknet_trailer_sync) == 54U,
+              "SA-MP 0.3.7 trailer sync payload must be 54 bytes");
+static_assert(offsetof(samp_raknet_trailer_sync, position) == 2U,
+              "SA-MP 0.3.7 trailer position ABI offset");
+static_assert(offsetof(samp_raknet_trailer_sync, quaternion) == 14U,
+              "SA-MP 0.3.7 trailer quaternion ABI offset");
+static_assert(offsetof(samp_raknet_trailer_sync, move_speed) == 30U,
+              "SA-MP 0.3.7 trailer velocity ABI offset");
+static_assert(offsetof(samp_raknet_trailer_sync, turn_speed) == 42U,
+              "SA-MP 0.3.7 trailer angular velocity ABI offset");
+static_assert(sizeof(samp_raknet_passenger_sync) == 24U,
+              "SA-MP 0.3.7 passenger sync payload must be 24 bytes");
+static_assert(offsetof(samp_raknet_passenger_sync, seat_flags) == 2U,
+              "SA-MP 0.3.7 passenger flags ABI offset");
+static_assert(offsetof(samp_raknet_passenger_sync, position) == 12U,
+              "SA-MP 0.3.7 passenger position ABI offset");
 static_assert(sizeof(samp_raknet_spectator_sync) == 18U, "SA-MP 0.3.7 spectator sync payload must be 18 bytes");
 static_assert(sizeof(samp_raknet_map_icon_event) == 24U, "internal map-icon event ABI must remain stable");
 static_assert(sizeof(samp_raknet_gang_zone_event) == 28U, "internal gang-zone event ABI must remain stable");
@@ -485,6 +524,7 @@ struct RpcProbeState {
 };
 
 RpcProbeState g_rpc_probe = {};
+SampDll::Net::RakNetOfflineStatusObserver g_offline_status_observer;
 unsigned int g_game_mode_restart_generation = 0U;
 
 void release_all_object_material_states(const char *reason);
@@ -5219,10 +5259,20 @@ const samp_raknet_player_pool_event *find_recent_player_join(unsigned short play
 }
 
 bool player_id_is_local(unsigned short player_id) {
-  if (g_rpc_probe.auth_local_player_id_valid != 0U && g_rpc_probe.auth_local_player_id == player_id) {
-    return true;
+  /*
+   * PROBE_TRACE + STATIC_037:
+   * RakNet's connection-accepted PlayerIndex is a transport slot, not the
+   * SA-MP player id.  A two-client run assigned transport index 1 while
+   * ScrInitGame assigned local SA-MP id 0.  Once InitGame has arrived, the
+   * CPlayerPool local id is authoritative for RPC player-id fields.
+   * The original RPC 34 handler compares the payload id against
+   * CPlayerPool's local id at samp.dll+0xF65F..+0xF69E.
+   * samp.dll SHA256=b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+   */
+  if (g_rpc_probe.saw_init_game != 0) {
+    return g_rpc_probe.init_local_player_id == player_id;
   }
-  return g_rpc_probe.saw_init_game != 0 && g_rpc_probe.init_local_player_id == player_id;
+  return g_rpc_probe.auth_local_player_id_valid != 0U && g_rpc_probe.auth_local_player_id == player_id;
 }
 
 void sanitize_textdraw_text(char *text) {
@@ -7696,10 +7746,32 @@ int drain_packets_internal(void *client, int max_packets, const samp_raknet_join
     if (reset_session) {
       trace_netf("packet-state id=%d reset_rpc_probe reason=disconnect", last_packet_id);
       reset_rpc_probe_runtime(rak_client);
+      g_offline_status_observer.Reset();
     } else {
       service_rpc_probe_actions(rak_client);
     }
     ++drained;
+  }
+
+  /*
+   * PROBE_TRACE + INFERRED:
+   * RakPeer consumes direct two-byte ID_NO_FREE_INCOMING_CONNECTIONS and
+   * ID_CONNECTION_BANNED replies without producing a Packet.  Surface one
+   * pending direct status through the existing drain result, after normal
+   * packets, so out_last_packet_id cannot be overwritten by an unrelated
+   * packet from the same pump.  The status stays pending when the caller has
+   * exhausted max_packets.
+   */
+  if (out_last_packet_id != nullptr && drained < max_packets &&
+      client == g_rpc_probe.client) {
+    const int direct_status = g_offline_status_observer.Consume();
+    if (direct_status >= 0) {
+      last_packet_id = direct_status;
+      ++drained;
+      trace_netf("packet-state id=%d source=direct_offline surfaced=1 "
+                 "evidence=PROBE_TRACE,INFERRED",
+                 direct_status);
+    }
   }
 
   if (out_connected != nullptr) {
@@ -7732,6 +7804,8 @@ int samp_raknet_client_create(void **out_client) {
 
   reset_rpc_probe_runtime(client);
   register_rpc_probe_handlers(client);
+  g_offline_status_observer.Reset();
+  client->AttachPlugin(&g_offline_status_observer);
   *out_client = client;
   return 0;
 }
@@ -7741,14 +7815,27 @@ int samp_raknet_client_destroy(void *client) {
     return 0;
   }
 
+  static_cast<RakNet::RakClientInterface *>(client)->DetachPlugin(&g_offline_status_observer);
   if (client == g_rpc_probe.client) {
     release_all_object_material_states("client_destroy");
     std::memset(g_rpc_probe.object_generations, 0, sizeof(g_rpc_probe.object_generations));
     g_rpc_probe.object_generation_seq = 0U;
     g_rpc_probe.object_material_revision_seq = 0U;
     g_rpc_probe.client = nullptr;
+    g_offline_status_observer.Reset();
   }
   RakNet::RakNetworkFactory::DestroyRakClientInterface(static_cast<RakNet::RakClientInterface *>(client));
+  return 0;
+}
+
+int samp_raknet_client_set_password(void *client, const char *password) {
+  RakNet::RakClientInterface *rak_client = static_cast<RakNet::RakClientInterface *>(client);
+
+  if (rak_client == nullptr) {
+    return -1;
+  }
+  rak_client->SetPassword(password != nullptr && password[0] != '\0' ? password : nullptr);
+  trace_netf("connect password configured=%d", rak_client->HasPassword() ? 1 : 0);
   return 0;
 }
 
@@ -7758,6 +7845,7 @@ int samp_raknet_client_connect(void *client, const char *host, uint16_t server_p
     return -1;
   }
 
+  g_offline_status_observer.Reset();
   reset_rpc_probe_runtime(static_cast<RakNet::RakClientInterface *>(client));
   trace_netf("connect host=%s server_port=%u client_port=%u thread_sleep=%d", host, static_cast<unsigned int>(server_port),
              static_cast<unsigned int>(client_port), thread_sleep_timer);
@@ -7771,6 +7859,9 @@ void samp_raknet_client_disconnect(void *client, unsigned int block_duration, un
     return;
   }
 
+  if (client == g_rpc_probe.client) {
+    g_offline_status_observer.Reset();
+  }
   static_cast<RakNet::RakClientInterface *>(client)->Disconnect(block_duration, ordering_channel);
 }
 
@@ -7858,15 +7949,20 @@ int samp_raknet_client_send_textdraw_click(void *client, uint16_t textdraw_id) {
     return -1;
   }
 
+  /*
+   * STATIC_037:
+   * The R5 cancel path at samp.dll+0x71520 clears the selector before calling
+   * the sender at +0x71480. A normal click does not clear it.
+   */
+  if (textdraw_id == 0xFFFFu) {
+    g_rpc_probe.textdraw_select_active = 0U;
+  }
   bs_send.Write(id);
   sent = static_cast<RakNet::RakClientInterface *>(client)
              ->RPC(kRpcClickTextDraw, &bs_send, RakNet::HIGH_PRIORITY, RakNet::RELIABLE, 0, false,
                    RakNet::UNASSIGNED_NETWORK_ID, nullptr)
              ? 1
              : 0;
-  if (sent) {
-    g_rpc_probe.textdraw_select_active = 0U;
-  }
   trace_netf("rpc-user-out id=83 name=ClickTextDraw textdraw=%u sent=%d",
              static_cast<unsigned int>(textdraw_id), sent);
   return sent ? 0 : -2;
@@ -7970,7 +8066,8 @@ int samp_raknet_client_send_onfoot_sync(void *client, const samp_raknet_onfoot_s
              ? 1
              : 0;
   trace_netf("packet-user-out id=%u name=PlayerFootSync sent=%d pos=%.3f %.3f %.3f health=%u keys=0x%04x "
-             "lr=0x%04x ud=0x%04x weapon=%u q=%.5f %.5f %.5f %.5f anim=%d anim_flags=0x%04x",
+             "lr=0x%04x ud=0x%04x weapon=%u q=%.5f %.5f %.5f %.5f "
+             "surf=%u surf_offset=%.3f %.3f %.3f anim=%d anim_flags=0x%04x",
              static_cast<unsigned int>(kPacketPlayerSync), sent, static_cast<double>(sync->position[0]),
              static_cast<double>(sync->position[1]), static_cast<double>(sync->position[2]),
              static_cast<unsigned int>(sync->health), static_cast<unsigned int>(sync->keys),
@@ -7978,6 +8075,10 @@ int samp_raknet_client_send_onfoot_sync(void *client, const samp_raknet_onfoot_s
              static_cast<unsigned int>(sync->current_weapon), static_cast<double>(sync->quaternion[0]),
              static_cast<double>(sync->quaternion[1]), static_cast<double>(sync->quaternion[2]),
              static_cast<double>(sync->quaternion[3]),
+             static_cast<unsigned int>(sync->surfing_vehicle_id),
+             static_cast<double>(sync->surfing_offsets[0]),
+             static_cast<double>(sync->surfing_offsets[1]),
+             static_cast<double>(sync->surfing_offsets[2]),
              static_cast<int>(sync->current_animation_id),
              static_cast<unsigned int>(static_cast<std::uint16_t>(sync->animation_flags)));
   return sent ? 0 : -2;
@@ -8123,6 +8224,197 @@ int samp_raknet_client_send_bullet_sync(void *client, const samp_raknet_bullet_s
   return sent ? 0 : -2;
 }
 
+int samp_raknet_client_send_unoccupied_sync(void *client, const samp_raknet_unoccupied_sync *sync) {
+  RakNet::BitStream bs_send;
+  int sent = 0;
+
+  if (client == nullptr || client != g_rpc_probe.client || sync == nullptr ||
+      sync->vehicle_id >= SAMP_RAKNET_MAX_VEHICLES || sync->seat_id > 8U ||
+      !vehicle_vec_plausible(sync->roll) || !vehicle_vec_plausible(sync->rotation) ||
+      !vehicle_vec_plausible(sync->position) || !vehicle_vec_plausible(sync->move_speed) ||
+      !vehicle_vec_plausible(sync->turn_speed) || !vehicle_health_plausible(sync->vehicle_health)) {
+    return -1;
+  }
+
+  /*
+   * STATIC_037:
+   * R5 CLocalPlayer::SendUnoccupiedSync at samp.dll+0x4D30 writes packet 209
+   * followed by the packed 67-byte payload.  The send at
+   * samp.dll+0x4EA6 pushes HIGH_PRIORITY, UNRELIABLE_SEQUENCED, channel 1.
+   * Original DLL SHA256:
+   * b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+   */
+  bs_send.Write(kPacketUnoccupiedSync);
+  bs_send.Write(reinterpret_cast<const char *>(sync), static_cast<int>(sizeof(*sync)));
+  sent = static_cast<RakNet::RakClientInterface *>(client)
+             ->Send(&bs_send, RakNet::HIGH_PRIORITY, RakNet::UNRELIABLE_SEQUENCED, 1)
+             ? 1
+             : 0;
+  trace_netf("packet-user-out id=%u name=UnoccupiedSync sent=%d vehicle=%u seat=%u "
+             "pos=%.3f %.3f %.3f speed=%.3f %.3f %.3f health=%.3f "
+             "evidence=STATIC_037",
+             static_cast<unsigned int>(kPacketUnoccupiedSync), sent,
+             static_cast<unsigned int>(sync->vehicle_id),
+             static_cast<unsigned int>(sync->seat_id),
+             static_cast<double>(sync->position[0]),
+             static_cast<double>(sync->position[1]),
+             static_cast<double>(sync->position[2]),
+             static_cast<double>(sync->move_speed[0]),
+             static_cast<double>(sync->move_speed[1]),
+             static_cast<double>(sync->move_speed[2]),
+             static_cast<double>(sync->vehicle_health));
+  return sent ? 0 : -2;
+}
+
+int samp_raknet_client_send_trailer_sync(void *client, const samp_raknet_trailer_sync *sync) {
+  RakNet::BitStream bs_send;
+  float quaternion_length_sq = 0.0f;
+  int sent = 0;
+
+  if (sync != nullptr) {
+    quaternion_length_sq = sync->quaternion[0] * sync->quaternion[0] +
+                           sync->quaternion[1] * sync->quaternion[1] +
+                           sync->quaternion[2] * sync->quaternion[2] +
+                           sync->quaternion[3] * sync->quaternion[3];
+  }
+  if (client == nullptr || client != g_rpc_probe.client || sync == nullptr ||
+      sync->vehicle_id >= SAMP_RAKNET_MAX_VEHICLES ||
+      !vehicle_vec_plausible(sync->position) || !vehicle_vec_plausible(sync->move_speed) ||
+      !vehicle_vec_plausible(sync->turn_speed) ||
+      !std::isfinite(sync->quaternion[0]) || !std::isfinite(sync->quaternion[1]) ||
+      !std::isfinite(sync->quaternion[2]) || !std::isfinite(sync->quaternion[3]) ||
+      !std::isfinite(quaternion_length_sq) || quaternion_length_sq < 0.000001f ||
+      quaternion_length_sq > 4.0f) {
+    return -1;
+  }
+
+  /*
+   * STATIC_037:
+   * R5 CLocalPlayer::SendTrailerSync at samp.dll+0x53D0 writes packet 210
+   * followed by the packed 54-byte payload.  The send at
+   * samp.dll+0x5539 pushes HIGH_PRIORITY, UNRELIABLE_SEQUENCED, channel 1.
+   * Original DLL SHA256:
+   * b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+   */
+  bs_send.Write(kPacketTrailerSync);
+  bs_send.Write(reinterpret_cast<const char *>(sync), static_cast<int>(sizeof(*sync)));
+  sent = static_cast<RakNet::RakClientInterface *>(client)
+             ->Send(&bs_send, RakNet::HIGH_PRIORITY, RakNet::UNRELIABLE_SEQUENCED, 1)
+             ? 1
+             : 0;
+  trace_netf("packet-user-out id=%u name=TrailerSync sent=%d vehicle=%u "
+             "pos=%.3f %.3f %.3f q=%.5f %.5f %.5f %.5f "
+             "speed=%.3f %.3f %.3f evidence=STATIC_037",
+             static_cast<unsigned int>(kPacketTrailerSync), sent,
+             static_cast<unsigned int>(sync->vehicle_id),
+             static_cast<double>(sync->position[0]),
+             static_cast<double>(sync->position[1]),
+             static_cast<double>(sync->position[2]),
+             static_cast<double>(sync->quaternion[0]),
+             static_cast<double>(sync->quaternion[1]),
+             static_cast<double>(sync->quaternion[2]),
+             static_cast<double>(sync->quaternion[3]),
+             static_cast<double>(sync->move_speed[0]),
+             static_cast<double>(sync->move_speed[1]),
+             static_cast<double>(sync->move_speed[2]));
+  return sent ? 0 : -2;
+}
+
+int samp_raknet_client_send_passenger_sync(void *client, const samp_raknet_passenger_sync *sync) {
+  RakNet::BitStream bs_send;
+  int sent = 0;
+
+  if (client == nullptr || client != g_rpc_probe.client || sync == nullptr ||
+      sync->vehicle_id >= SAMP_RAKNET_MAX_VEHICLES ||
+      (sync->seat_flags & 0x3FU) == 0U) {
+    return -1;
+  }
+
+  /*
+   * STATIC_037:
+   * R5 CLocalPlayer::SendPassengerFullSyncData at samp.dll+0x5590 writes
+   * packet 211 followed by the packed 24-byte payload.  Its send at
+   * samp.dll+0x577E pushes HIGH_PRIORITY, UNRELIABLE_SEQUENCED, channel 1.
+   * Original DLL SHA256:
+   * b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+   */
+  bs_send.Write(kPacketPassengerSync);
+  bs_send.Write(reinterpret_cast<const char *>(sync), static_cast<int>(sizeof(*sync)));
+  sent = static_cast<RakNet::RakClientInterface *>(client)
+             ->Send(&bs_send, RakNet::HIGH_PRIORITY, RakNet::UNRELIABLE_SEQUENCED, 1)
+             ? 1
+             : 0;
+  trace_netf("packet-user-out id=%u name=PassengerSync sent=%d vehicle=%u seat=%u "
+             "drive_by=%u cuffed=%u weapon=%u pos=%.3f %.3f %.3f "
+             "evidence=STATIC_037",
+             static_cast<unsigned int>(kPacketPassengerSync), sent,
+             static_cast<unsigned int>(sync->vehicle_id),
+             static_cast<unsigned int>(sync->seat_flags & 0x3FU),
+             static_cast<unsigned int>((sync->seat_flags >> 6U) & 1U),
+             static_cast<unsigned int>((sync->seat_flags >> 7U) & 1U),
+             static_cast<unsigned int>(sync->additional_key_weapon & 0x3FU),
+             static_cast<double>(sync->position[0]),
+             static_cast<double>(sync->position[1]),
+             static_cast<double>(sync->position[2]));
+  return sent ? 0 : -2;
+}
+
+int samp_raknet_client_send_enter_vehicle(void *client, uint16_t vehicle_id, uint8_t passenger) {
+  RakNet::BitStream bs_send;
+  int sent = 0;
+
+  if (client == nullptr || client != g_rpc_probe.client ||
+      vehicle_id >= SAMP_RAKNET_MAX_VEHICLES || passenger > 1U) {
+    return -1;
+  }
+  /*
+   * STATIC_037:
+   * R5 CLocalPlayer::SendEnterVehicleNotification at samp.dll+0x5AD0 writes
+   * UINT16 vehicle then BYTE passenger.  The RPC call at samp.dll+0x5BA8 uses
+   * HIGH_PRIORITY, RELIABLE_SEQUENCED, channel 0.
+   */
+  bs_send.Write(static_cast<unsigned short>(vehicle_id));
+  bs_send.Write(static_cast<unsigned char>(passenger));
+  sent = static_cast<RakNet::RakClientInterface *>(client)
+             ->RPC(kRpcEnterVehicle, &bs_send, RakNet::HIGH_PRIORITY,
+                   RakNet::RELIABLE_SEQUENCED, 0, false,
+                   RakNet::UNASSIGNED_NETWORK_ID, nullptr)
+             ? 1
+             : 0;
+  trace_netf("rpc-user-out id=26 name=EnterVehicle vehicle=%u passenger=%u sent=%d "
+             "evidence=STATIC_037",
+             static_cast<unsigned int>(vehicle_id),
+             static_cast<unsigned int>(passenger), sent);
+  return sent ? 0 : -2;
+}
+
+int samp_raknet_client_send_exit_vehicle(void *client, uint16_t vehicle_id) {
+  RakNet::BitStream bs_send;
+  int sent = 0;
+
+  if (client == nullptr || client != g_rpc_probe.client ||
+      vehicle_id >= SAMP_RAKNET_MAX_VEHICLES) {
+    return -1;
+  }
+  /*
+   * STATIC_037:
+   * R5 CLocalPlayer::SendExitVehicleNotification at samp.dll+0x5BF0 writes
+   * UINT16 vehicle.  Its RPC call at samp.dll+0x5CC8 uses HIGH_PRIORITY,
+   * RELIABLE_SEQUENCED, channel 0.
+   */
+  bs_send.Write(static_cast<unsigned short>(vehicle_id));
+  sent = static_cast<RakNet::RakClientInterface *>(client)
+             ->RPC(kRpcExitVehicle, &bs_send, RakNet::HIGH_PRIORITY,
+                   RakNet::RELIABLE_SEQUENCED, 0, false,
+                   RakNet::UNASSIGNED_NETWORK_ID, nullptr)
+             ? 1
+             : 0;
+  trace_netf("rpc-user-out id=154 name=ExitVehicle vehicle=%u sent=%d "
+             "evidence=STATIC_037",
+             static_cast<unsigned int>(vehicle_id), sent);
+  return sent ? 0 : -2;
+}
+
 int samp_raknet_client_send_spectator_sync(void *client, const samp_raknet_spectator_sync *sync) {
   RakNet::BitStream bs_send;
   int sent = 0;
@@ -8133,12 +8425,13 @@ int samp_raknet_client_send_spectator_sync(void *client, const samp_raknet_spect
 
   /* STATIC_037 + OPENMP_REF:
    * CLocalPlayer::ProcessSpectating sends ID_SPECTATOR_SYNC followed by the packed
-   * 18-byte analog/key/camera-position payload every 200 ms.
+   * 18-byte analog/key/camera-position payload every 200 ms. The Send call at
+   * samp.dll+0x6659 pushes HIGH_PRIORITY, UNRELIABLE, channel 1.
    */
   bs_send.Write(kPacketSpectatorSync);
   bs_send.Write(reinterpret_cast<const char *>(sync), static_cast<int>(sizeof(*sync)));
   sent = static_cast<RakNet::RakClientInterface *>(client)
-             ->Send(&bs_send, RakNet::HIGH_PRIORITY, RakNet::UNRELIABLE, 0)
+             ->Send(&bs_send, RakNet::HIGH_PRIORITY, RakNet::UNRELIABLE, 1)
              ? 1
              : 0;
   trace_netf("packet-user-out id=%u name=SpectatorSync sent=%d pos=%.3f %.3f %.3f keys=0x%04x "
@@ -9129,7 +9422,28 @@ int samp_raknet_client_send_spawn_notification_for_seq(void *client, uint32_t sp
                                           static_cast<unsigned int>(spawn_info_seq));
 }
 
-int samp_raknet_client_send_death_notification(void *client, uint8_t death_reason, uint8_t responsible_player) {
+int samp_raknet_client_send_respawn_notification(void *client) {
+  RakNet::BitStream bs_send;
+  int sent = 0;
+
+  if (client == nullptr || client != g_rpc_probe.client) {
+    return -1;
+  }
+  /*
+   * OBSERVED_037 + ALT_02X_CODE:
+   * Respawn reuses empty RPC_Spawn even if the initial-spawn notification was
+   * already sent. It must not pass through the initial spawn sequence guard.
+   */
+  sent = static_cast<RakNet::RakClientInterface *>(client)
+             ->RPC(kRpcSpawn, &bs_send, RakNet::HIGH_PRIORITY, RakNet::RELIABLE_SEQUENCED, 0, false,
+                   RakNet::UNASSIGNED_NETWORK_ID, nullptr)
+             ? 1
+             : 0;
+  trace_netf("rpc-auto-out id=52 name=RespawnNotify sent=%d evidence=OBSERVED_037,ALT_02X_CODE", sent);
+  return sent ? 0 : -2;
+}
+
+int samp_raknet_client_send_death_notification(void *client, uint8_t death_reason, uint16_t responsible_player) {
   RakNet::BitStream bs_send;
   int sent = 0;
 
@@ -9138,19 +9452,47 @@ int samp_raknet_client_send_death_notification(void *client, uint8_t death_reaso
   }
 
   /*
-   * STATIC_037 + TODO_VERIFY:
-   * 0.3.x localplayer writes byte death reason then byte responsible player to RPC_Death. The exact GTA-side
-   * reason discovery is still pending, so callers may pass 255 as a conservative unknown/world value.
+   * OBSERVED_037 + ALT_02X_CODE:
+   * RPC_Death contains a byte reason followed by the 16-bit PLAYERID that was
+   * responsible. A world/self death therefore carries INVALID_PLAYER_ID
+   * (65535), not an 8-bit 255 sentinel.
    */
   bs_send.Write(static_cast<unsigned char>(death_reason));
-  bs_send.Write(static_cast<unsigned char>(responsible_player));
+  bs_send.Write(static_cast<unsigned short>(responsible_player));
   sent = static_cast<RakNet::RakClientInterface *>(client)
-             ->RPC(kRpcDeath, &bs_send, RakNet::HIGH_PRIORITY, RakNet::RELIABLE_SEQUENCED, 0, false,
+             ->RPC(kRpcDeath, &bs_send, RakNet::HIGH_PRIORITY, RakNet::RELIABLE_ORDERED, 0, false,
                    RakNet::UNASSIGNED_NETWORK_ID, nullptr)
              ? 1
              : 0;
-  trace_netf("rpc-auto-out id=53 name=Death reason=%u responsible=%u sent=%d evidence=STATIC_037,TODO_VERIFY",
+  trace_netf("rpc-auto-out id=53 name=Death reason=%u responsible=%u sent=%d evidence=OBSERVED_037,ALT_02X_CODE",
              static_cast<unsigned int>(death_reason), static_cast<unsigned int>(responsible_player), sent);
+  return sent ? 0 : -2;
+}
+
+int samp_raknet_client_send_pickup_notification(void *client, int32_t pickup_id) {
+  RakNet::BitStream bs_send;
+  int sent = 0;
+
+  if (client == nullptr || client != g_rpc_probe.client || pickup_id < 0) {
+    return -1;
+  }
+
+  /*
+   * ALT_02X_CODE + OPENMP_REF + TODO_VERIFY:
+   * CPickupPool::PickedUp writes a signed 32-bit pool index and sends RPC 131
+   * HIGH_PRIORITY/RELIABLE_SEQUENCED on channel zero. Runtime comparison
+   * against R5 remains part of the pickup golden-trace scenario.
+   */
+  bs_send.Write(static_cast<int>(pickup_id));
+  sent = static_cast<RakNet::RakClientInterface *>(client)
+             ->RPC(kRpcPickedUpPickup, &bs_send, RakNet::HIGH_PRIORITY,
+                   RakNet::RELIABLE_SEQUENCED, 0, false,
+                   RakNet::UNASSIGNED_NETWORK_ID, nullptr)
+             ? 1
+             : 0;
+  trace_netf("rpc-auto-out id=131 name=PickedUpPickup pickup=%d sent=%d "
+             "evidence=ALT_02X_CODE,OPENMP_REF,TODO_VERIFY",
+             static_cast<int>(pickup_id), sent);
   return sent ? 0 : -2;
 }
 
@@ -9166,13 +9508,16 @@ int samp_raknet_client_mark_class_selection_after_death(void *client) {
   }
 
   /*
-   * INFERRED + TODO_VERIFY:
-   * The local 0.2x legacy tree keeps F4 as a "wants another class" latch and only calls
-   * HandleClassSelection() from the wasted respawn path.
+   * STATIC_037 + ALT_02X_CODE:
+   * R5 CLocalPlayer::Process sets the wants-another-class latch at
+   * samp.dll+0x7CF1..+0x7D21.  It is consumed only by the wasted recovery
+   * branch at +0x7D24..+0x7DE1.
+   * samp.dll SHA256=b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
    */
   g_rpc_probe.class_selection_after_death_requested = 1;
   g_rpc_probe.class_selection_after_death_consumed = 0;
-  trace_netf("rpc-manual: f4_after_death_latched selected_class=%d evidence=INFERRED,TODO_VERIFY",
+  trace_netf("rpc-manual: f4_after_death_latched selected_class=%d "
+             "evidence=STATIC_037:samp.dll+0x7CF1,ALT_02X_CODE",
              g_rpc_probe.selected_class);
   return 0;
 }
@@ -9189,9 +9534,11 @@ int samp_raknet_client_request_class_selection_after_death(void *client) {
   }
 
   /*
-   * INFERRED + TODO_VERIFY:
-   * Mirrors legacy HandleClassSelection() after m_bWantsAnotherClass is consumed. Keep auto
-   * RequestSpawn disabled until the player explicitly confirms class selection again.
+   * STATIC_037 + ALT_02X_CODE:
+   * At samp.dll+0x7DD4 R5 clears its wasted flag, calls
+   * HandleClassSelection (+0x4080), and clears the F4 latch.  The alternative
+   * normal-Spawn call at +0x7DC3 is bypassed.  Keep RequestSpawn disabled
+   * until the player explicitly confirms a class again.
    */
   g_rpc_probe.class_selection_after_death_requested = 0;
   g_rpc_probe.class_selection_after_death_consumed = 1;
@@ -9204,7 +9551,8 @@ int samp_raknet_client_request_class_selection_after_death(void *client) {
   g_rpc_probe.request_spawn_send_count = 0U;
   g_rpc_probe.manual_spawn_shift_down = 0;
   schedule_request_class(g_rpc_probe.selected_class, "f4_after_death");
-  trace_netf("rpc-manual: f4_after_death_request_class selected_class=%d evidence=INFERRED,TODO_VERIFY",
+  trace_netf("rpc-manual: f4_after_death_request_class selected_class=%d "
+             "evidence=STATIC_037:samp.dll+0x7DD4,ALT_02X_CODE",
              g_rpc_probe.selected_class);
   return 0;
 }
