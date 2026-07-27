@@ -290,5 +290,26 @@ if(SAMPDLL_BUILD_TESTS)
     target_link_libraries(test_raknet_bridge PRIVATE sampdll_net)
 
     add_test(NAME raknet_bridge COMMAND test_raknet_bridge)
+
+    if(NOT WIN32)
+      add_executable(test_raknet_offline_status_delivery
+        tests/test_raknet_offline_status_delivery.cpp
+      )
+      target_include_directories(test_raknet_offline_status_delivery
+        PRIVATE
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+      )
+      target_link_libraries(test_raknet_offline_status_delivery PRIVATE sampdll_net)
+
+      add_test(NAME raknet_offline_status_delivery COMMAND test_raknet_offline_status_delivery)
+
+      # Headless local-network probe used by the parity runbook.  It is not a
+      # CTest because it intentionally requires an explicitly started test
+      # server and may hold a player slot for several seconds.
+      add_executable(samp_raknet_headless_probe
+        ../tools/reloop/raknet_headless_probe.cpp
+      )
+      target_link_libraries(samp_raknet_headless_probe PRIVATE sampdll_net)
+    endif()
   endif()
 endif()

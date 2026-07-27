@@ -23,10 +23,36 @@ explicit checks with:
 python3 tools/reloop/analyze_interaction.py artifacts/runs/<run>
 ```
 
+For targeted dialog probes, `control_client.py type-enter --text VALUE` sends
+the value through `WM_CHAR` and submits Enter without first opening chat. This
+lets `/tpassword` verify that the client masks the visible field while RPC 62
+still returns the original test value.
+
 `--companion` additionally launches `ReLoopPeer` from the other prefix for
 RPC23 scoreboard-click work. On Wayland the second Wine window may steal
 effective focus, so companion runs are not freeze/camera evidence unless the
 primary trace proves that T and TAB became active.
+
+## GMX and clean-quit lifecycle probe
+
+The replacement-only lifecycle probe keeps a TextDraw, the stock-style
+`CreateMenu`, objects and remote-player metadata active while open.mp receives
+`gmx`. It then requires RPC40, a complete session-generation reset, another
+InitGame and spawn, and finally the client's real delayed `/q`/`ExitProcess`
+path:
+
+```bash
+python3 tools/reloop/lifecycle_probe.py run
+python3 tools/reloop/lifecycle_probe.py analyze artifacts/runs/<lifecycle-run>
+```
+
+`lifecycle-verdict.json` treats invalid `WSACleanup`, crashes, missing
+menu/object reset markers, missing reinitialization, and a surviving native
+game process as hard failures. Pixel-level TextDraw disappearance and physical
+remote-ped cleanup remain explicit manual checks when the logs contain no
+post-reset render count or streamed companion ped. A missing
+`process_detach: done` is classified as expected when `/q` reached
+`ExitProcess(0)`.
 
 ## Two-client sync fixture
 
@@ -58,6 +84,57 @@ markers record role spawn/streaming, player state, sampled input keys and
 movement, and ordinary firearm bullet callbacks. Rustler driver weapons do not
 produce `OnPlayerWeaponShot`; their parity verdict therefore requires an
 observer screenshot/trace in addition to the pilot key marker.
+
+## Deterministic UDP impairment
+
+`udp_impairment_proxy.py` provides seeded loss, delay, jitter, and datagram
+reordering without changing either client or server code. Run open.mp on
+`127.0.0.1:7798`, bind the proxy to the second loopback address with the same
+port, and point the client at `127.0.0.2:7798`:
+
+```bash
+python3 tools/reloop/udp_impairment_proxy.py \
+  --listen 127.0.0.2:7798 \
+  --upstream 127.0.0.1:7798 \
+  --loss 0.05 --delay-ms 80 --jitter-ms 20 \
+  --reorder 0.10 --reorder-hold-ms 60 --seed 37 \
+  --log artifacts/runs/<run>/udp-impairment.jsonl \
+  --stats artifacts/runs/<run>/udp-impairment-stats.json
+```
+
+The proxy intentionally keeps the upstream and downstream UDP port identical:
+the legacy SA-MP transport transform depends on the peer port. It accepts one
+client per process, records foreign senders, and emits direction-specific
+receive/forward/drop counters. Use a separate temporary `reloop.toml` whose
+`run.host` is `127.0.0.2` together with `--server-mode reuse` for a normal
+artifact-producing run through the proxy.
+
+For transport-only checks without GTA/Wine, build the
+`samp_raknet_headless_probe` host target. It answers the SA-MP auth challenge
+and can assert decoded packet IDs, including offline datagrams observed before
+the public RakNet receive queue:
+
+```bash
+cmake --build build-host --target samp_raknet_headless_probe -j2
+build-host/samp_raknet_headless_probe \
+  --host 127.0.0.2 --port 7798 --duration-ms 10000 --expect-packet 34
+```
+
+For a fixture that is deliberately expected to reject before RakNet creates a
+normal receive packet, add `--adapter-terminal`. This makes the expectation use
+the same adapter drain/status path as the replacement runtime. Stop on any
+unexpected normal packet rather than using this mode against a possibly
+accepting server:
+
+```bash
+build-host/samp_raknet_headless_probe \
+  --host 127.0.0.1 --port 7807 --duration-ms 3000 \
+  --expect-packet 31 --adapter-terminal
+```
+
+See `docs/traces/network_adversity_headless_20260727.md` for the isolated
+server-full fixture, the distinction between headless transport evidence and
+original/replacement GUI evidence, and a seeded impairment result.
 
 Crash verdicts use a three-attempt policy by default. A single
 `PRECONNECT_CRASH` or `RUNTIME_CRASH` is retried automatically with the same

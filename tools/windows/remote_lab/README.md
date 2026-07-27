@@ -43,6 +43,9 @@ From the Linux workspace, the passwordless wrapper uses
 tools/windows/remote_lab/samp_lab.sh ping
 tools/windows/remote_lab/samp_lab.sh screenshot-burst combat-m4 60 50
 tools/windows/remote_lab/samp_lab.sh key ENTER language_english
+tools/windows/remote_lab/samp_lab.sh key MENUTEST create-menu-golden
+tools/windows/remote_lab/samp_lab.sh key TPASSWORD password-dialog-golden
+tools/windows/remote_lab/samp_lab.sh key TPASSWORDVALUE password-dialog-type
 tools/windows/remote_lab/samp_lab.sh key ACTORS actor_cycle
 tools/windows/remote_lab/samp_lab.sh key RPC176RAW actor_position_raw
 tools/windows/remote_lab/samp_lab.sh click 1176 674 spawn
@@ -55,6 +58,7 @@ tools/windows/remote_lab/samp_lab.sh probe-profile actor-heavy
 tools/windows/remote_lab/samp_lab.sh overlay-profile shadow
 tools/windows/remote_lab/samp_lab.sh overlay-kill on
 tools/windows/remote_lab/samp_lab.sh favorite-port 3 192.168.3.181 7778 7798
+tools/windows/remote_lab/samp_lab.sh favorite-endpoint 3 192.168.200.149 7798 192.168.3.181 7798
 tools/windows/remote_lab/samp_lab.sh fetch-run RUN_ID /tmp/samp-runs
 ```
 

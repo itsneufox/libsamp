@@ -13,9 +13,33 @@ static int assert_true(int cond, const char *msg) {
   return 0;
 }
 
+static int check_runtime_restart(void) {
+  int failed = 0;
+  int cycle = 0;
+
+  for (cycle = 0; cycle < 2; ++cycle) {
+    failed += assert_true(samp_net_runtime_init() == 0, "network runtime init");
+    failed += assert_true(samp_net_runtime_init() == 0, "network runtime init is idempotent");
+#ifdef _WIN32
+    {
+      samp_socket_t socket_handle = (samp_socket_t)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+      failed += assert_true(socket_handle != SAMP_INVALID_SOCKET, "socket available after runtime init");
+      if (socket_handle != SAMP_INVALID_SOCKET) {
+        samp_net_close_socket(socket_handle);
+      }
+    }
+#endif
+    samp_net_runtime_shutdown();
+    samp_net_runtime_shutdown();
+  }
+  return failed;
+}
+
 int main(void) {
   int failed = 0;
   samp_endpoint ep;
+
+  failed += check_runtime_restart();
 
   failed += assert_true(samp_net_parse_hostport("example.com:7777", 7777, &ep) == 0, "parse dns:port");
   failed += assert_true(strcmp(ep.host, "example.com") == 0, "host dns:port");

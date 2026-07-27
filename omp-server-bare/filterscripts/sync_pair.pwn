@@ -23,7 +23,10 @@ enum E_SYNC_PAIR_SCENARIO
     SYNC_PAIR_NONE,
     SYNC_PAIR_ONFOOT,
     SYNC_PAIR_CAR,
-    SYNC_PAIR_RUSTLER
+    SYNC_PAIR_RUSTLER,
+    SYNC_PAIR_JETPACK,
+    SYNC_PAIR_PICKUP,
+    SYNC_PAIR_DEATH
 };
 
 static gSyncPilot = INVALID_PLAYER_ID;
@@ -32,6 +35,7 @@ static bool:gSyncSpawned[MAX_PLAYERS];
 static E_SYNC_PAIR_SCENARIO:gSyncScenario;
 static gSyncVehicle = INVALID_VEHICLE_ID;
 static gSyncTargetVehicle = INVALID_VEHICLE_ID;
+static gSyncPickup = -1;
 static WEAPON:gSyncWeapon = WEAPON_FIST;
 static gSyncLastSampleTick;
 static gSyncLastHeartbeatTick;
@@ -55,6 +59,9 @@ stock SyncPairScenarioName(E_SYNC_PAIR_SCENARIO:scenario, output[], size)
         case SYNC_PAIR_ONFOOT: format(output, size, "onfoot");
         case SYNC_PAIR_CAR: format(output, size, "car");
         case SYNC_PAIR_RUSTLER: format(output, size, "rustler");
+        case SYNC_PAIR_JETPACK: format(output, size, "jetpack");
+        case SYNC_PAIR_PICKUP: format(output, size, "pickup");
+        case SYNC_PAIR_DEATH: format(output, size, "death");
         default: format(output, size, "none");
     }
     return 1;
@@ -126,6 +133,9 @@ stock bool:SyncPairScenarioKnown(const scenario[])
         !strcmp(scenario, "sniper", true) ||
         !strcmp(scenario, "car", true) ||
         !strcmp(scenario, "rustler", true) ||
+        !strcmp(scenario, "jetpack", true) ||
+        !strcmp(scenario, "pickup", true) ||
+        !strcmp(scenario, "death", true) ||
         !strcmp(scenario, "streamout", true) ||
         !strcmp(scenario, "stop", true);
 }
@@ -145,6 +155,16 @@ stock SyncPairDestroyVehicles()
     return 1;
 }
 
+stock SyncPairDestroyPickup()
+{
+    if (gSyncPickup != -1)
+    {
+        DestroyPickup(gSyncPickup);
+        gSyncPickup = -1;
+    }
+    return 1;
+}
+
 stock bool:SyncPairReady()
 {
     return gSyncPilot != INVALID_PLAYER_ID &&
@@ -153,6 +173,21 @@ stock bool:SyncPairReady()
         IsPlayerConnected(gSyncObserver) &&
         gSyncSpawned[gSyncPilot] &&
         gSyncSpawned[gSyncObserver];
+}
+
+stock bool:SyncPairPilotReady()
+{
+    return gSyncPilot != INVALID_PLAYER_ID &&
+        IsPlayerConnected(gSyncPilot) &&
+        gSyncSpawned[gSyncPilot];
+}
+
+stock bool:SyncPairScenarioNeedsObserver(const scenario[])
+{
+    return strcmp(scenario, "jetpack", true) != 0 &&
+        strcmp(scenario, "pickup", true) != 0 &&
+        strcmp(scenario, "death", true) != 0 &&
+        strcmp(scenario, "stop", true) != 0;
 }
 
 stock SyncPairResetSampling()
@@ -184,6 +219,7 @@ stock SyncPairPreparePlayers()
         SetPlayerArmour(playerid, 0.0);
         SetPlayerTime(playerid, 12, 0);
         SetPlayerWeather(playerid, 10);
+        SetPlayerSpecialAction(playerid, SPECIAL_ACTION_NONE);
         ResetPlayerWeapons(playerid);
         SetPlayerPos(playerid, SYNC_PAIR_X, SYNC_PAIR_Y - (index * 6.0), SYNC_PAIR_Z);
     }
@@ -222,6 +258,7 @@ stock SyncPairBegin(E_SYNC_PAIR_SCENARIO:scenario)
     }
 
     SyncPairDestroyVehicles();
+    SyncPairDestroyPickup();
     SyncPairPreparePlayers();
     gSyncScenario = scenario;
     SyncPairResetSampling();
@@ -269,6 +306,35 @@ stock SyncPairBegin(E_SYNC_PAIR_SCENARIO:scenario)
             PutPlayerInVehicle(gSyncPilot, gSyncVehicle, 0);
             if (SyncPairReady()) SyncPairSetObserverCamera(SYNC_PAIR_Z + 2.5);
         }
+        case SYNC_PAIR_JETPACK:
+        {
+            gSyncWeapon = WEAPON_FIST;
+            SetPlayerPos(gSyncPilot, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z);
+            SetPlayerFacingAngle(gSyncPilot, 0.0);
+            SetCameraBehindPlayer(gSyncPilot);
+            SetPlayerSpecialAction(gSyncPilot, SPECIAL_ACTION_USEJETPACK);
+            if (SyncPairReady()) SyncPairSetOnFootObserverCamera();
+        }
+        case SYNC_PAIR_PICKUP:
+        {
+            gSyncWeapon = WEAPON_FIST;
+            SetPlayerPos(gSyncPilot, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z);
+            if (SyncPairReady()) SyncPairSetOnFootObserverCamera();
+            gSyncPickup = CreatePickup(
+                1240, 1, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z, 0
+            );
+            printf("[sync_pair] marker=PICKUP_CREATED pickup=%d player=%d",
+                gSyncPickup, gSyncPilot);
+        }
+        case SYNC_PAIR_DEATH:
+        {
+            gSyncWeapon = WEAPON_FIST;
+            SetPlayerPos(gSyncPilot, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z);
+            if (SyncPairReady()) SyncPairSetOnFootObserverCamera();
+            SetPlayerHealth(gSyncPilot, 0.0);
+            printf("[sync_pair] marker=DEATH_TRIGGER player=%d method=health_zero",
+                gSyncPilot);
+        }
     }
 
     printf("[sync_pair] marker=SCENARIO_START request=%d scenario=%s pilot=%d observer=%d vehicle=%d target_vehicle=%d weapon=%d",
@@ -290,6 +356,11 @@ stock SyncPairStop(const reason[])
         gSyncActiveRequestId, scenarioName, reason, gSyncUpdateCount, gSyncShotCount,
         _:gSyncWeapon);
     SyncPairDestroyVehicles();
+    SyncPairDestroyPickup();
+    if (gSyncPilot != INVALID_PLAYER_ID && IsPlayerConnected(gSyncPilot))
+    {
+        SetPlayerSpecialAction(gSyncPilot, SPECIAL_ACTION_NONE);
+    }
     if (gSyncObserver != INVALID_PLAYER_ID && IsPlayerConnected(gSyncObserver))
     {
         TogglePlayerControllable(gSyncObserver, true);
@@ -327,6 +398,9 @@ stock SyncPairBeginNamed(const scenario[])
     if (!strcmp(scenario, "sniper", true)) return SyncPairBeginOnFoot(WEAPON_SNIPER);
     if (!strcmp(scenario, "car", true)) return SyncPairBegin(SYNC_PAIR_CAR);
     if (!strcmp(scenario, "rustler", true)) return SyncPairBegin(SYNC_PAIR_RUSTLER);
+    if (!strcmp(scenario, "jetpack", true)) return SyncPairBegin(SYNC_PAIR_JETPACK);
+    if (!strcmp(scenario, "pickup", true)) return SyncPairBegin(SYNC_PAIR_PICKUP);
+    if (!strcmp(scenario, "death", true)) return SyncPairBegin(SYNC_PAIR_DEATH);
     return 0;
 }
 
@@ -423,7 +497,7 @@ public OnPlayerSpawn(playerid)
     {
         printf("[sync_pair] marker=PAIR_READY pilot=%d observer=%d", gSyncPilot, gSyncObserver);
         SendClientMessage(gSyncPilot, 0x66CCFFFF,
-            "[sync_pair] Ready: /syncpair pistol | m4 | sniper | car | rustler | stop");
+            "[sync_pair] Ready: /syncpair pistol | m4 | sniper | car | rustler | jetpack | pickup | death | stop");
     }
     return 1;
 }
@@ -438,7 +512,10 @@ public OnPlayerCommandText(playerid, cmdtext[])
         !strcmp(cmdtext, "/syncpair m4", true) ||
         !strcmp(cmdtext, "/syncpair sniper", true) ||
         !strcmp(cmdtext, "/syncpair car", true) ||
-        !strcmp(cmdtext, "/syncpair rustler", true))
+        !strcmp(cmdtext, "/syncpair rustler", true) ||
+        !strcmp(cmdtext, "/syncpair jetpack", true) ||
+        !strcmp(cmdtext, "/syncpair pickup", true) ||
+        !strcmp(cmdtext, "/syncpair death", true))
     {
         new scenario[16];
         strmid(scenario, cmdtext, 10, strlen(cmdtext), sizeof(scenario));
@@ -490,7 +567,8 @@ public SyncPairPollRequest()
     }
 
     SyncPairEmitRequestMarker("REQUEST_ACCEPTED", requestId, "ACTION", scenario, "host_request");
-    if (!SyncPairReady())
+    if (!SyncPairPilotReady() ||
+        (SyncPairScenarioNeedsObserver(scenario) && !SyncPairReady()))
     {
         SyncPairEmitRequestMarker("REQUEST_REJECTED", requestId, "FAIL", scenario, "pair_not_ready");
         return 1;
@@ -531,7 +609,8 @@ public SyncPairPollRequest()
 /// open.mp forwards the update to the observer.
 /// References: https://open.mp/docs/scripting/callbacks/OnPlayerUpdate and
 /// https://open.mp/docs/scripting/functions/GetPlayerKeys,
-/// https://open.mp/docs/scripting/functions/GetPlayerFacingAngle and
+/// https://open.mp/docs/scripting/functions/GetPlayerFacingAngle,
+/// https://open.mp/docs/scripting/functions/GetPlayerSpecialAction and
 /// https://open.mp/docs/scripting/functions/GetPlayerRotationQuat,
 /// https://open.mp/docs/scripting/functions/GetVehicleZAngle and
 /// https://open.mp/docs/scripting/functions/GetVehicleRotationQuat
@@ -557,6 +636,7 @@ public OnPlayerUpdate(playerid)
     new vehicleId = GetPlayerVehicleID(playerid);
     new Float:zAim = GetPlayerZAim(playerid);
     new cameraMode = GetPlayerCameraMode(playerid);
+    new specialAction = GetPlayerSpecialAction(playerid);
     GetPlayerKeys(playerid, keys, upDown, leftRight);
     GetPlayerPos(playerid, x, y, z);
     GetPlayerVelocity(playerid, vx, vy, vz);
@@ -582,9 +662,9 @@ public OnPlayerUpdate(playerid)
     {
         new scenarioName[16];
         SyncPairScenarioName(gSyncScenario, scenarioName, sizeof(scenarioName));
-        printf("[sync_pair] marker=PILOT_SYNC scenario=%s sample=%d state=%d vehicle=%d target_vehicle=%d weapon=%d keys=0x%x ud=%d lr=%d pos=%.3f,%.3f,%.3f vel=%.4f,%.4f,%.4f facing=%.4f quat=%.5f,%.5f,%.5f,%.5f vehicle_angle=%.4f vehicle_quat=%.5f,%.5f,%.5f,%.5f camera_mode=%d camera_front=%.4f,%.4f,%.4f aim_z=%.4f",
+        printf("[sync_pair] marker=PILOT_SYNC scenario=%s sample=%d state=%d vehicle=%d target_vehicle=%d weapon=%d special=%d keys=0x%x ud=%d lr=%d pos=%.3f,%.3f,%.3f vel=%.4f,%.4f,%.4f facing=%.4f quat=%.5f,%.5f,%.5f,%.5f vehicle_angle=%.4f vehicle_quat=%.5f,%.5f,%.5f,%.5f camera_mode=%d camera_front=%.4f,%.4f,%.4f aim_z=%.4f",
             scenarioName, gSyncUpdateCount, _:playerState, vehicleId,
-            gSyncTargetVehicle, _:gSyncWeapon, _:keys, upDown, leftRight, x, y, z, vx, vy, vz,
+            gSyncTargetVehicle, _:gSyncWeapon, specialAction, _:keys, upDown, leftRight, x, y, z, vx, vy, vz,
             facingAngle, quatW, quatX, quatY, quatZ,
             vehicleAngle, vehicleQuatW, vehicleQuatX, vehicleQuatY, vehicleQuatZ,
             cameraMode, cameraX, cameraY, cameraZ, zAim);
@@ -593,6 +673,31 @@ public OnPlayerUpdate(playerid)
         gSyncLastUpDown = upDown;
         gSyncLastLeftRight = leftRight;
         gSyncLastState = playerState;
+    }
+    return 1;
+}
+
+/// Records the client-originated death notification and attribution.
+/// Reference: https://open.mp/docs/scripting/callbacks/OnPlayerDeath
+public OnPlayerDeath(playerid, killerid, WEAPON:reason)
+{
+    if (playerid == gSyncPilot || playerid == gSyncObserver)
+    {
+        printf("[sync_pair] marker=PLAYER_DEATH player=%d killer=%d reason=%d scenario=%d",
+            playerid, killerid, _:reason, _:gSyncScenario);
+    }
+    return 1;
+}
+
+/// Records RPC 131 pickup completion for the deterministic pickup scenario.
+/// Reference: https://open.mp/docs/scripting/callbacks/OnPlayerPickUpPickup
+public OnPlayerPickUpPickup(playerid, pickupid)
+{
+    if (playerid == gSyncPilot && pickupid == gSyncPickup)
+    {
+        printf("[sync_pair] marker=PICKUP_COLLECTED player=%d pickup=%d scenario=%d",
+            playerid, pickupid, _:gSyncScenario);
+        SyncPairDestroyPickup();
     }
     return 1;
 }

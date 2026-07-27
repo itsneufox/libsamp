@@ -11,6 +11,7 @@ int samp_raknet_client_available(void);
 int samp_raknet_client_create(void **out_client);
 int samp_raknet_client_destroy(void *client);
 
+int samp_raknet_client_set_password(void *client, const char *password);
 int samp_raknet_client_connect(void *client, const char *host, uint16_t server_port, uint16_t client_port,
                                int thread_sleep_timer);
 void samp_raknet_client_disconnect(void *client, unsigned int block_duration, unsigned char ordering_channel);
@@ -21,7 +22,9 @@ int samp_raknet_client_send_server_command(void *client, const char *command);
 int samp_raknet_client_send_rcon_command(void *client, const char *command);
 int samp_raknet_client_send_spawn_notification(void *client);
 int samp_raknet_client_send_spawn_notification_for_seq(void *client, uint32_t spawn_info_seq);
-int samp_raknet_client_send_death_notification(void *client, uint8_t death_reason, uint8_t responsible_player);
+int samp_raknet_client_send_respawn_notification(void *client);
+int samp_raknet_client_send_death_notification(void *client, uint8_t death_reason, uint16_t responsible_player);
+int samp_raknet_client_send_pickup_notification(void *client, int32_t pickup_id);
 int samp_raknet_client_send_textdraw_click(void *client, uint16_t textdraw_id);
 int samp_raknet_client_send_player_click(void *client, uint16_t player_id, uint8_t source);
 int samp_raknet_client_send_menu_select(void *client, uint8_t row);
@@ -85,6 +88,37 @@ typedef struct samp_raknet_bullet_sync {
   uint8_t weapon_id;
 } samp_raknet_bullet_sync;
 
+typedef struct samp_raknet_unoccupied_sync {
+  uint16_t vehicle_id;
+  uint8_t seat_id;
+  float roll[3];
+  float rotation[3];
+  float position[3];
+  float move_speed[3];
+  float turn_speed[3];
+  float vehicle_health;
+} samp_raknet_unoccupied_sync;
+
+typedef struct samp_raknet_trailer_sync {
+  uint16_t vehicle_id;
+  float position[3];
+  float quaternion[4];
+  float move_speed[3];
+  float turn_speed[3];
+} samp_raknet_trailer_sync;
+
+typedef struct samp_raknet_passenger_sync {
+  uint16_t vehicle_id;
+  uint8_t seat_flags;
+  uint8_t additional_key_weapon;
+  uint8_t health;
+  uint8_t armour;
+  uint16_t left_right_keys;
+  uint16_t up_down_keys;
+  uint16_t keys;
+  float position[3];
+} samp_raknet_passenger_sync;
+
 typedef struct samp_raknet_spectator_sync {
   uint16_t left_right_keys;
   uint16_t up_down_keys;
@@ -97,7 +131,12 @@ int samp_raknet_client_send_onfoot_sync(void *client, const samp_raknet_onfoot_s
 int samp_raknet_client_send_incar_sync(void *client, const samp_raknet_incar_sync *sync);
 int samp_raknet_client_send_aim_sync(void *client, const samp_raknet_aim_sync *sync);
 int samp_raknet_client_send_bullet_sync(void *client, const samp_raknet_bullet_sync *sync);
+int samp_raknet_client_send_unoccupied_sync(void *client, const samp_raknet_unoccupied_sync *sync);
+int samp_raknet_client_send_trailer_sync(void *client, const samp_raknet_trailer_sync *sync);
+int samp_raknet_client_send_passenger_sync(void *client, const samp_raknet_passenger_sync *sync);
 int samp_raknet_client_send_spectator_sync(void *client, const samp_raknet_spectator_sync *sync);
+int samp_raknet_client_send_enter_vehicle(void *client, uint16_t vehicle_id, uint8_t passenger);
+int samp_raknet_client_send_exit_vehicle(void *client, uint16_t vehicle_id);
 int samp_raknet_client_send_give_take_damage(void *client, uint8_t taking, uint16_t player_id, float damage,
                                              uint32_t weapon_id, uint32_t bodypart);
 int samp_raknet_client_send_actor_damage(void *client, uint16_t actor_id, float damage,
