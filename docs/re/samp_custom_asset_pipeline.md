@@ -1,5 +1,12 @@
 # SA-MP Custom Asset Pipeline
 
+> **2026-07-28 correction:** later R5 static analysis proves that the original
+> DLL reserves 20,000 `CAtomicModelInfo` entries; 15,417 is the observed
+> populated count after the stock `SAMP.ide` pass, not the R5 store capacity.
+> See `docs/re/custom_modelinfo_static_r5_20260728.md`. Older 15,417-capacity
+> wording below describes replacement experiments and must not be cited as
+> `STATIC_037`.
+
 ## Current Evidence
 
 - `OBSERVED_037 + PROBE_TRACE`: original 0.3.7-R5 opens `SAMP\samp.IDE`, `SAMP\custom.IDE`, `SAMP\CUSTOM.IMG`, `SAMP\SAMP.IMG`, and `SAMP\SAMPCOL.IMG`.

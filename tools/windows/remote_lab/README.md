@@ -43,6 +43,9 @@ From the Linux workspace, the passwordless wrapper uses
 tools/windows/remote_lab/samp_lab.sh ping
 tools/windows/remote_lab/samp_lab.sh screenshot-burst combat-m4 60 50
 tools/windows/remote_lab/samp_lab.sh key ENTER language_english
+tools/windows/remote_lab/samp_lab.sh key TAB scoreboard-hold
+tools/windows/remote_lab/samp_lab.sh key F6 chat-edge
+tools/windows/remote_lab/samp_lab.sh key F7 chat-mode-edge
 tools/windows/remote_lab/samp_lab.sh key MENUTEST create-menu-golden
 tools/windows/remote_lab/samp_lab.sh key TPASSWORD password-dialog-golden
 tools/windows/remote_lab/samp_lab.sh key TPASSWORDVALUE password-dialog-type
@@ -57,6 +60,7 @@ tools/windows/remote_lab/samp_lab.sh stop
 tools/windows/remote_lab/samp_lab.sh probe-profile actor-heavy
 tools/windows/remote_lab/samp_lab.sh overlay-profile shadow
 tools/windows/remote_lab/samp_lab.sh overlay-kill on
+tools/windows/remote_lab/samp_lab.sh autopause-disable
 tools/windows/remote_lab/samp_lab.sh favorite-port 3 192.168.3.181 7778 7798
 tools/windows/remote_lab/samp_lab.sh favorite-endpoint 3 192.168.200.149 7798 192.168.3.181 7798
 tools/windows/remote_lab/samp_lab.sh fetch-run RUN_ID /tmp/samp-runs
@@ -115,14 +119,73 @@ are written under `C:\samp-test\screenshots\bursts`. The completed command JSON
 also contains the manifest path, per-frame timestamps, measured capture times,
 paths, and hashes.
 
+`TAB`, `F6`, and `F7` are fixed bounded actions, not a general key-injection
+interface. The shell wrapper and both PowerShell parameter boundaries
+allowlist them explicitly. `Send-SampTestInput.ps1` sends matching Win32
+key-down/key-up events in a `try`/`finally`: TAB is held for 750 ms, while F6
+and F7 are held for 100 ms. The target must be the single foreground GTA
+window. These actions do not automate ESC or the GTA pause menu.
+
 Module inventories use Toolhelp with both `TH32CS_SNAPMODULE` and
 `TH32CS_SNAPMODULE32`; this lets the 64-bit PowerShell agent enumerate the
 32-bit GTA process, including `samp.dll` and loaded ASIs.
+
+The `ping` response also reports the configured GTA root, GTA/SA-MP/probe/
+control hashes, active managed probe flag files, and the parsed
+`III.VC.SA.WindowedMode.ini` auto-pause state. The same state and hashes are
+persisted in the run manifest, allowing distributed runners to require
+`[game] autoPause = 0` without changing the behavior of unrelated manual lab
+starts.
 
 `probe-profile` removes only the probe's fixed, known flag-file allowlist and
 then enables the selected named profile. It refuses to change flags while a
 GTA/SA-MP process is running; arbitrary flag names and arbitrary commands are
 not accepted.
+
+The `trailer-r5` probe profile enables only the timing-minimized original-R5
+Packet-210 ring trace. The probe deliberately skips its normal Winsock/IAT and
+unrelated code-hook sets in this profile.
+
+The separate `vehicle-lifecycle` profile enables only the original-R5
+`VehiclePool::New` and `CPlayerPed::PutDirectlyInVehicle` lifecycle ring
+trace. It records bounded pre/post pool, GTA vehicle, driver, passenger-seat,
+status, and flag snapshots without file I/O on either hooked thread. It also
+skips the normal Winsock/IAT, render, trailer, and unrelated code-hook sets.
+
+The `aim-bullet-jetpack` profile enables only the original-R5 aim-context,
+remote key, shot/fire-dispatch, and jetpack-wrapper ring trace. Its eight
+hooks are all-or-nothing, exact-R5/GTA-identity and entry/tail-byte guarded,
+normalize the two guarded R5 HIGHLOW operands to the actual module base, and
+write only bounded pre/post state into memory on the hooked thread. GTA
+remains fixed-base guarded. The worker later emits the ped matrix, aim
+buffers, weapon/task state, shot geometry, frame, thread, and caller RVA.
+
+The `death-cleanup` profile enables only the original-R5 local Process,
+Spawn, class-selection, GMX-reset, connection-loss, and `CNetGame` destructor
+ring trace. Its six hooks are all-or-nothing and exact-R5/GTA-identity,
+R5-relocation-normalized, fixed-GTA-base, entry-byte, and return-tail guarded.
+Only the documented HIGHLOW operand in the Spawn entry is rebased; every
+surrounding byte remains exact. Hook threads capture bounded local player,
+ped/task, UI/camera, pool-count, representative entity, and
+RemoveBuilding-counter snapshots; the worker performs the file logging.
+
+The `pickup-r5` profile enables only the original-R5
+`CPickupPool::PickedUp`/`CPickupPool::Process` ring trace plus the existing
+bounded outgoing RakClient RPC observer for RPC 131/97. It records pickup
+handles, raw GTA indices, notification timers, dropped/player metadata, types,
+process cadence, and pre/post state without hook-thread file I/O.
+
+The `ui-latches-r5` profile enables only the original-R5 chat-mode,
+chat-open/close, scoreboard-show/hide, cursor-mode/restore, menu-query, and
+remote-player Process ring trace. Its nine hooks are all-or-nothing and
+exact-R5/GTA-identity, relocation-normalized for R5, fixed-GTA-base,
+entry/tail, cursor-return, and AFK-transition-byte guarded. Hook threads never
+inject input or write files.
+TAB/chat/cursor calls capture bounded pre/post state, menu records are
+edge-only, and remote AFK records use a bounded tracker with a one-second
+heartbeat. The worker logs raw frontend/input-gate/cursor values and Win32
+focus/capture observations; fields not directly proven by R5 static analysis
+remain explicitly `TODO_VERIFY`.
 
 `overlay-profile` selects only `bypass`, `shadow`, or `replace` for
 `samp_re.asi` and refuses changes while GTA/SA-MP is running. The interactive

@@ -57,6 +57,54 @@ function Get-SampLabHash {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-SampLabAutoPauseState {
+    param([Parameter(Mandatory = $true)][string]$GameDir)
+
+    $path = Join-Path $GameDir "III.VC.SA.WindowedMode.ini"
+    $value = $null
+    $section = ""
+    if (Test-Path -LiteralPath $path) {
+        foreach ($rawLine in Get-Content -LiteralPath $path -ErrorAction Stop) {
+            $line = $rawLine.Trim()
+            if (-not $line -or $line.StartsWith(";") -or $line.StartsWith("#")) {
+                continue
+            }
+            if ($line.StartsWith("[") -and $line.EndsWith("]")) {
+                $section = $line.Substring(1, $line.Length - 2).Trim().ToLowerInvariant()
+                continue
+            }
+            if ($section -ne "game" -or -not $line.Contains("=")) {
+                continue
+            }
+            $parts = $line -split "=", 2
+            if ($parts[0].Trim().ToLowerInvariant() -ne "autopause") {
+                continue
+            }
+            $value = (($parts[1] -split "[;#]", 2)[0]).Trim()
+        }
+    }
+    return [pscustomobject]@{
+        path = $path
+        exists = Test-Path -LiteralPath $path
+        value = $value
+        disabled = $value -eq "0"
+    }
+}
+
+function Get-SampLabProbeFlags {
+    param([Parameter(Mandatory = $true)][string]$GameDir)
+
+    if (-not (Test-Path -LiteralPath $GameDir)) {
+        return @()
+    }
+    return @(
+        Get-ChildItem -LiteralPath $GameDir -Filter "samp_probe_*.flag" -File `
+            -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        Select-Object -ExpandProperty Name
+    )
+}
+
 function Get-SampLabCurrentRun {
     param([string]$Root = "C:\samp-test")
 

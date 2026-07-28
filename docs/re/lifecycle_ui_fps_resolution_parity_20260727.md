@@ -54,20 +54,35 @@ The replacement now requires:
 
 1. the byte-validated graphics callback to capture the GTA thread ID;
 2. three graphics callbacks on that same thread;
-3. only then may pre-connect `LoadSceneCollision`, `LoadScene`, `04E4`, and
-   script camera operations execute.
+3. only then may the retained `04E4` refresh and script camera operations
+   execute.
 
 The monitor path only advances the GTA frontend and records pending work. It
 does not fall back to unsafe scene/camera calls if the callback is absent.
 
-`PROBE_TRACE`:
+The earlier three-callback experiment did allow direct
+`LoadSceneCollision`/`LoadScene` calls and produced successful controls, but
+later stress runs proved that the same state can still block indefinitely
+inside either routine:
 
-- `20260727-001418-replacement-player-340214` passed connect, spawn, and the
-  player fixture with the default one-second settle.
-- Its order is explicit:
-  `waiting_for_game_thread` -> callback 1 -> callback 2 -> callback 3 ->
-  `LoadSceneCollision begin/end` -> `LoadScene begin/end` -> `04E4 begin/end`.
-- No `exception_filter` record was emitted.
+- pre-connect hangs:
+  `20260727-165414-replacement-ui-680318`,
+  `20260727-165627-replacement-ui-680318`, and
+  `20260727-170425-replacement-labels-688825`;
+- post-Join spawn hang:
+  `20260727-170626-replacement-labels-688825`;
+- successful controls:
+  `20260727-165838-replacement-ui-680318` and
+  `20260727-170837-replacement-labels-688825`.
+
+`STATIC_037` revalidation of the original R5 DLL found no reference to GTA
+`CStreaming::LoadSceneCollision` (`0x40ED80`) and no reference to
+`CStreaming::LoadScene` (`0x40EB70`). It found one reference to
+`LoadAllRequestedModels` (`0x40EA10`) at `samp.dll+0xA0A6A`, inside the
+specific request/load-model helper. The replacement therefore no longer calls
+the two direct scene routines from pre-connect, spawn, class-selection,
+SetPlayerPos, or movement refresh. GTA's normal streamer and the established
+`04E4` refresh path remain active.
 
 The diagnostic semantic gate remains default-off. Its current TXD/clothes
 signals must not be presented as original behavior.
@@ -235,6 +250,11 @@ Implemented:
 - legacy GTA menu panels are hidden;
 - TextDraws, objects, remote-player state, dialogs, audio, camera interpolation,
   checkpoints, pickups, and relevant overlay state are reset;
+- local OnFoot, InCar, Passenger, Unoccupied, Trailer, Aim and Bullet sender
+  cadence/counters are reset, including Passenger entry/exit latches and the
+  BulletSync ammunition baseline;
+- the cached armed weapon is cleared with its RPC sequence, preventing a
+  pre-GMX weapon from leaking into the first sync packet of the next mode;
 - jetpack, camera targeting, widescreen, controls, interior, gravity, and the
   local interior network value are restored to neutral state;
 - the WinSock wrapper is now restartable and idempotent, so repeated shutdown
@@ -258,6 +278,19 @@ The report was `PASS_WITH_WARNINGS` only because the runner stopped the final
 process and therefore did not observe a normal `process_detach`. This covers
 one complete regression cycle; repeated long-duration GMX/quit stress remains
 open.
+
+`PROBE_TRACE`: the focused lifecycle run
+`artifacts/runs/20260727-190810-replacement-lifecycle-gmx-849440`, replacement
+SHA256
+`39031a3ab89d1d531674ec607a5564dac1369b633916455c218f3b9d139a9b68`,
+completed connect, initial spawn, active TextDraw/menu/object preconditions,
+RPC 40 reset, second InitGame, second class selection/spawn, real `/q` and
+native `ExitProcess(0)`. The adapter reported
+`session_probe_reset=1 transport_preserved=1`; the analyzer found two
+`spawn_finalize` markers, no client exception, no remaining GTA process and
+no failed `WSACleanup`. Its verdict is `PASS_WITH_MANUAL_VISUAL` only because
+the fixture cannot automatically prove pixel-level TextDraw disappearance or
+physical destruction of a remote ped that was never streamed.
 
 ## AFK, pause, and background operation
 
@@ -289,14 +322,16 @@ Open:
 ## Remaining high-priority compatibility gaps
 
 1. Repeated long-duration lifecycle stress across GMX, second spawn, `/q`,
-   and native exit; one 11-case coordinated cycle passes.
+   and native exit; one 11-case coordinated cycle and one focused full GMX
+   lifecycle pass.
 2. Font 4 sprite TXD loading and Font 5 visual/device-reset goldens.
 3. Resolution-list visual comparison beyond the now-matching Alt+Enter path.
 4. AFK icon runtime placement, focus-loss cadence, and pause-menu network
    behavior.
-5. Incoming unoccupied/trailer runtime playback and exact authority
-   arbitration; outgoing 209/210/211 and RPC 26/154 now have conservative
-   implementations.
+5. Original-observer/visual parity for unoccupied and trailer playback, plus
+   exact authority/cadence arbitration. Original-sender to replacement-receiver
+   decode, application and GTA readback now have a focused live trace; outgoing
+   209/210/211 and RPC 26/154 remain conservative implementations.
 6. Complete surfing collision semantics, train edge cases, spectator
    lifecycle, virtual worlds, and outgoing interior RPC 118.
 7. Two-client visual closure of remote BulletSync impacts/muzzle flash.

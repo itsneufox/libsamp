@@ -466,26 +466,23 @@ def _capture_logs(
 def _click_replacement_spawn_button(
     control: ControlClient, state: dict[str, Any]
 ) -> None:
-    """Click the replacement class-selection overlay's resolution-scaled Spawn."""
+    """Click the replacement class-selection overlay's fixed R5 Spawn control."""
     width = int(state["client_w"])
     height = int(state["client_h"])
-    button_width = 86
-    button_height = 36
-    spawn_width = 100
-    gap = 10
-    if width < 640:
-        button_width = 72
-        button_height = 32
-        spawn_width = 86
-    group_width = (button_width * 2) + spawn_width + (gap * 2)
-    start_x = (width - group_width) // 2
-    spawn_x = start_x + (button_width * 2) + (gap * 2)
-    bottom_y = height - button_height - 36
+    dialog_width = 310
+    dialog_height = 40
+    bottom_margin = 50
+    spawn_offset_x = 210
+    button_offset_y = 5
+    button_width = 90
+    button_height = 30
+    dialog_x = (width - dialog_width) // 2
+    dialog_y = height - dialog_height - bottom_margin
     control.command(
         "mouse",
         action="click",
-        x=spawn_x + (spawn_width // 2),
-        y=bottom_y + (button_height // 2),
+        x=dialog_x + spawn_offset_x + (button_width // 2),
+        y=dialog_y + button_offset_y + (button_height // 2),
     )
 
 

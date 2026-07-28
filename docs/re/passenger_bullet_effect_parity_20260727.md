@@ -79,8 +79,10 @@ guarded saved-byte restoration. It can be disabled with
 - GTA call-site bytes: verified against the reference executable above.
 - Integrated Win32 compile: passed; final coordinated candidate SHA256
   `acb5edd84e5c634309d50cb68213dffd9d575ccb59fae454c66242df4977168b`.
-- Paired original/replacement passenger and BulletSync visual runs remain
-  pending.
+- Replacement PassengerSync seating now has a focused original-sender runtime
+  trace and GTA seat readback in
+  `docs/re/sync_edge_states_r5_20260727.md`; paired original-observer visuals
+  and BulletSync visual runs remain pending.
 - `TODO_VERIFY`: exact RPC 154 timing; passenger drive-by/cuffed/additional-key
   sources; player-object hit target resolution; untyped/world-hit trajectory;
   remote ProcessControl timing around recoil/sway/audio.

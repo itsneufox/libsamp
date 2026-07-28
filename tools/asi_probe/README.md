@@ -26,6 +26,25 @@ It is intended for local reverse-engineering and compatibility work:
 14. on the validated GTA-SA 1.0 US IPL null-entity fault at `0x00405E15`,
     passively log the bounded `CFileLoader::LoadObjectInstance` input line from
     the still-live cdecl argument at `ESP[0]`.
+15. optionally trace original-R5 Packet-210 application at
+    `samp.dll+0x15C90`, buffering the packed payload and raw trailer
+    matrix/move/turn state before and after the original call.
+16. optionally correlate successful GTA-SA 1.0 US
+    `CTrailer::SetTowLink` calls with the first 64 direct
+    `CTrailer::ProcessControl` calls, including bounded pre/post tow-link,
+    matrix, suspension, speed, and frame/timing state.
+17. optionally trace original-R5 `VehiclePool::New` and
+    `CPlayerPed::PutDirectlyInVehicle` calls with bounded pre/post pool,
+    GTA vehicle, driver, passenger-seat, status, and flag snapshots.
+18. optionally trace the original-R5 remote aim-context, key mapping,
+    BulletSync shot/fire dispatch, and jetpack wrapper paths with bounded
+    pre/post ped, matrix, weapon, task-root, aim-buffer, and shot snapshots.
+19. optionally trace the original-R5 local death/spawn/class-selection state
+    machine and pre/post GMX, connection-loss, and destructor cleanup state,
+    including bounded pool, entity, UI, camera, and task-root snapshots.
+20. optionally trace original-R5 pickup collection and processing, correlating
+    pool handles, raw GTA pickup indices, notification timers, dropped-weapon
+    metadata, processing cadence, and outgoing pickup RPCs.
 
 The first pass rewrites selected import slots inside `samp.dll`, so observed calls are attributable to `samp.dll` rather than process-global Wine/WinDbg noise.
 
@@ -160,6 +179,13 @@ SAMP_PROBE_FONT5_HOOKS=1
 SAMP_PROBE_ACTOR_HOOKS=1
 SAMP_PROBE_ACTOR_HEAVY=1
 SAMP_PROBE_RPC_GAP_HOOKS=1
+SAMP_PROBE_TRAILER_SYNC_HOOKS=1
+SAMP_PROBE_TRAILER_PHYSICS_HOOKS=1
+SAMP_PROBE_VEHICLE_LIFECYCLE_HOOKS=1
+SAMP_PROBE_AIM_BULLET_JETPACK_HOOKS=1
+SAMP_PROBE_DEATH_CLEANUP_HOOKS=1
+SAMP_PROBE_PICKUP_HOOKS=1
+SAMP_PROBE_UI_LATCHES_HOOKS=1
 ```
 
 The asset trace can also be toggled through files next to the ASI:
@@ -179,6 +205,242 @@ samp_probe_actor_hooks.flag
 samp_probe_actor_heavy.flag
 samp_probe_rpc_gap_hooks.flag
 samp_probe_dialog_menu_rpc_hooks.flag
+samp_probe_trailer_sync_hooks.flag
+samp_probe_trailer_physics_hooks.flag
+samp_probe_vehicle_lifecycle_hooks.flag
+samp_probe_aim_bullet_jetpack_hooks.flag
+samp_probe_death_cleanup_hooks.flag
+samp_probe_pickup_hooks.flag
+samp_probe_ui_latches_hooks.flag
+```
+
+Use `samp_probe_trailer_sync_hooks.flag` only for short original-R5 trailer
+playback runs. It requires the exact supported R5 PE identity and validates
+the complete eight-byte entry patch plus the function epilogue before
+installing the single `samp.dll+0x15C90` hook. The hook copies state into a
+fixed in-memory ring; the worker flushes it every 250 ms. This focused mode
+does not install the normal Winsock/IAT or unrelated code hooks, avoiding
+synchronous file I/O on the receive/game thread. Each `trailer_sync_r5` line
+records target, pre/post position residual, move/turn vectors, live attachment
+pointers, and the original `noop`/`correct`/`snap` branch predicted from the
+statically observed thresholds. A pre-attachment mismatch is labeled
+`transition`, because the original routine can attach before its own matrix
+read.
+
+Use `samp_probe_trailer_physics_hooks.flag` for a focused GTA-SA 1.0 US
+attach/physics run. This profile implies the Packet-210 trace above when the
+loaded `samp.dll` has the exact supported R5 identity; with the replacement
+DLL, the R5 hook is rejected while the GTA hooks remain available. The probe
+requires the exact supported GTA executable PE identity proxy and exact entry
+and tail bytes for both functions before changing either target:
+
+- `gta_sa.exe+0x002CFDF0`: `CTrailer::SetTowLink`;
+- `gta_sa.exe+0x002CED20`: `CTrailer::ProcessControl`.
+
+The supported GTA executable has
+SHA256=`a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26`.
+`ProcessControl` starts with a relative base-class call, so this probe uses a
+dedicated gateway that recalculates that call rather than copying it through
+the generic trampoline. A successful `SetTowLink` arms one of eight fixed
+tracking slots for at most 64 direct `ProcessControl` samples. Hooks write
+only to a fixed 512-record ring; the worker emits the file log. Records share
+an `event` sequence with `trailer_sync_r5` lines so attach, early physics, and
+Packet-210 order can be compared without relying only on millisecond
+timestamps.
+
+Use `samp_probe_vehicle_lifecycle_hooks.flag` by itself for a focused
+original-R5 vehicle creation and occupancy run. It atomically preflights and
+installs exactly two `samp.dll` entry hooks:
+
+- `samp.dll+0x0001F080`: `VehiclePool::New`;
+- `samp.dll+0x000AC290`: `CPlayerPed::PutDirectlyInVehicle`.
+
+The supported original DLL has
+SHA256=`b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2`.
+The supported GTA executable has
+SHA256=`a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26`.
+Before changing either entry, the probe requires both exact PE identity
+proxies, complete-instruction entry bytes, both known `VehiclePool::New`
+return tails, and the shared `PutDirectlyInVehicle` return tail. A partial
+install is restored from the exact saved bytes; normal probe shutdown also
+restores only an owned `E9`/NOP patch.
+
+The hooks perform no file I/O. They copy bounded snapshots to a fixed
+256-record ring, which the worker flushes every 250 ms as
+`vehicle_lifecycle_r5` and `vehicle_lifecycle_state_r5`. Records include the
+SA-MP caller RVA/source label, input vehicle ID or GTA pool reference, seat,
+player-ped/current-vehicle pointers, pool listed/wrapper/entity pointers,
+GTA vehicle status and flags, driver, all eight passenger pointers, and
+tow/trailer links before and after the original call. Caller labels are
+`STATIC_037`; fields derived from GTA layouts remain
+`GTA_REVERSED_REF`/`TODO_VERIFY` until an original runtime trace confirms
+them. This focused profile skips normal Winsock/IAT, trailer, render, and
+unrelated code-hook sets. Keep the run short and process-bound; do not hot-
+unload the probe while either entry could be executing.
+
+Use `samp_probe_aim_bullet_jetpack_hooks.flag` by itself for a focused
+original-R5 combat/task run. The Windows lab profile name is
+`aim-bullet-jetpack`. It atomically preflights and installs these eight
+`samp.dll` hooks:
+
+- `samp.dll+0x0009C9C0`: install one remote 0x30-byte aim context;
+- `samp.dll+0x0009C960`: restore the saved local aim context;
+- `samp.dll+0x000AF340`: map remote sync keys into the GTA pad;
+- `samp.dll+0x000AF280`: store the bounded internal shot context;
+- `samp.dll+0x000AFA70`: dispatch the remote GTA fire path;
+- `samp.dll+0x000ACD10`: start jetpack;
+- `samp.dll+0x000ACD60`: stop jetpack;
+- `samp.dll+0x000ACDC0`: query jetpack mode.
+
+The supported original DLL has
+SHA256=`b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2`;
+the GTA executable has
+SHA256=`a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26`.
+The profile requires both exact PE identity proxies, complete-instruction
+entry spans, and every known return/tail form before changing the first
+entry. R5 may be loader-relocated. The guarded HIGHLOW operands at relocation
+RVAs `+0x9C964` and `+0xACD4B` are normalized from their preferred-image VAs
+to the actual R5 module base while all surrounding bytes remain exact. GTA
+has relocations stripped and is still required at its fixed preferred base.
+The ABI and stack-pop form of every wrapper are recorded next to the hook
+table. A partial install is restored in reverse order, and shutdown restores
+only an owned `E9`/NOP patch from its exact saved bytes.
+
+Hook threads perform no file I/O. They publish to a fixed 512-record ring;
+the worker emits `aim_bullet_jetpack_r5`,
+`aim_bullet_jetpack_state_r5`, and `aim_bullet_jetpack_aim_r5`. Records carry
+tick, GTA frame, thread, caller RVA, raw key arguments, shot input, target
+entity, active/per-player aim buffers, ped matrix/basis, weapon slot/state,
+eleven task-root pointers, and the jetpack task/vtable before and after the
+original call. Packet 206 and Packet 207 are call-chain context only; this
+first profile does not hook their large packet handlers. Field semantics not
+directly established by the static R5 instructions remain `TODO_VERIFY`.
+Keep runs short and do not hot-unload the ASI while a hook may be executing.
+
+Use `samp_probe_death_cleanup_hooks.flag` by itself for a focused original-R5
+death, respawn, F4 class-selection, and cleanup run. The Windows lab profile
+name is `death-cleanup`. It atomically preflights and installs six
+`samp.dll` entry hooks plus one terminal import checkpoint:
+
+- `samp.dll+0x000074C0`: `CLocalPlayer::Process`;
+- `samp.dll+0x00003C20`: `CLocalPlayer::Spawn`;
+- `samp.dll+0x00004080`: `CLocalPlayer::HandleClassSelection`;
+- `samp.dll+0x0000A540`: `CNetGame::ShutdownForGameModeRestart`;
+- `samp.dll+0x0000ACF0`: `CNetGame::Packet_ConnectionLost`;
+- `samp.dll+0x00009880`: `CNetGame::~CNetGame`;
+- `samp.dll+0x000E5188`: the R5 `KERNEL32!ExitProcess` IAT slot.
+
+The supported original DLL has
+SHA256=`b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2`;
+the GTA executable has
+SHA256=`a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26`.
+The profile requires both exact PE identity proxies, complete-instruction
+entry spans, and the known return tail of every hook before changing the first
+byte. R5 may be loader-relocated: the guarded HIGHLOW operand at relocation
+RVA `+0x3C29` in the `CLocalPlayer::Spawn` entry is normalized from its
+preferred-image VA to the actual R5 module base while all surrounding bytes
+remain exact. The terminal checkpoint additionally requires the relocated
+callsite bytes at `samp.dll+0xC508A`, the IAT operand resolving to
+`samp.dll+0xE5188`, and the unmodified slot resolving to
+`KERNEL32!ExitProcess`. GTA has relocations stripped and is still required at
+its fixed preferred base. Hook installation is all-or-nothing. Shutdown
+restores only owned `E9`/NOP patches and the owned four-byte IAT slot from
+their exact saved values.
+
+Hook threads do no file I/O. They publish to a fixed 256-record ring; the
+worker emits `death_cleanup_r5`, `death_cleanup_local_r5`,
+`death_cleanup_tasks_r5`, `death_cleanup_ui_r5`,
+`death_cleanup_pools_r5`, and `death_cleanup_entities_r5`. The local-process
+hook publishes only on a state transition or one-second heartbeat. Snapshots
+cover local active/wasted/spawn/class flags, the spawn-info hash, ped/entity
+and task pointers, camera/frontend/UI state, all pool pointers and occupancy
+counts, one bounded representative vehicle/object/actor chain, and the raw
+RemoveBuilding counter. Field semantics remain `STATIC_037`/`TODO_VERIFY`
+until a controlled original runtime trace confirms them.
+
+The terminal wrapper remains transparent for every caller except the exact
+R5 clean-quit return address `samp.dll+0xC5091`. At that callsite it captures
+the already-nullable global NetGame pointer and current ring boundary, signals
+the existing worker stop event, and waits at most 1500 ms. The worker drains
+the ring, restores owned hooks, closes each log append, then emits
+`death_cleanup_exit_r5` and releases the game thread to the saved real
+`ExitProcess`. The wrapper itself performs no file I/O; a timeout still calls
+the original function. This terminal path remains `STATIC_037` /
+`TODO_VERIFY` until a controlled original `/q` run observes the marker. Keep
+the run short and do not hot-unload the ASI while a hook may be executing.
+
+Use `samp_probe_pickup_hooks.flag` by itself for a focused original-R5 pickup
+collection run. The Windows lab profile name is `pickup-r5`. It atomically
+preflights and installs these two `samp.dll` hooks:
+
+- `samp.dll+0x00013440`: `CPickupPool::PickedUp`;
+- `samp.dll+0x00013520`: `CPickupPool::Process`.
+
+The supported original DLL has
+SHA256=`b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2`;
+the supported GTA executable has
+SHA256=`a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26`.
+Before changing either entry, the probe requires the exact PE identity of both
+modules, GTA at its fixed preferred base, both complete-instruction entry
+spans, and both known method tails. Installation is all-or-nothing; shutdown
+restores only owned entry patches from the exact saved bytes.
+
+The method hooks and the shared outgoing RakClient RPC hook perform no file
+I/O. They publish to one fixed 256-record ring; the worker emits
+`pickup_r5`, `pickup_pool_r5`, and `pickup_slot_r5`. The records share an event
+sequence and contain the raw `PickedUp` argument, GTA frame, caller RVA,
+process ordinal and cadence delta, the process-gate value at
+`samp.dll+0x00118A10`, pool count, up to eight active/focused slot snapshots,
+and RPC 131/97 payload/QoS/result. Slot snapshots include the full GTA pickup
+handle, raw GTA pool index, notification timer, dropped flag/player, model,
+type, and position bits before and after the original method. Layout meanings
+remain `STATIC_037`/`TODO_VERIFY` until controlled original runtime traces
+confirm them. Keep runs short and do not hot-unload the ASI while a hook may
+be executing.
+
+Use `samp_probe_ui_latches_hooks.flag` by itself for a focused original-R5
+AFK, pause-menu, TAB, chat, and cursor-latch run. The Windows lab profile name
+is `ui-latches-r5`. It atomically preflights and installs these nine
+`samp.dll` hooks:
+
+- `samp.dll+0x000612C0`: cycle the F7 chat display mode;
+- `samp.dll+0x00069480` / `+0x00069580`: open and close chat input;
+- `samp.dll+0x0006F3D0` / `+0x0006E9E0`: show and hide the scoreboard;
+- `samp.dll+0x000A06F0`: set the cursor/input mode;
+- `samp.dll+0x000A05D0`: advance the delayed input restore;
+- `samp.dll+0x000A0920`: query the GTA frontend/menu state;
+- `samp.dll+0x000166B0`: process one remote player and its AFK state.
+
+The profile accepts only R5
+SHA256=`b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2`
+with GTA 1.0 US
+SHA256=`a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26`
+at GTA's fixed preferred base. R5 itself may be loader-relocated; its guarded
+absolute operands are normalized from preferred-image VAs to the actual
+module base while every opcode, RVA, and non-relocated byte remains exact.
+Complete-instruction entries, every cursor-mode return form, both
+remote-process tails, and the statically identified on-foot/driver/passenger
+AFK transition blocks are checked before the first patch. Installation is
+all-or-nothing; shutdown restores only owned `E9`/NOP patches from the exact
+saved bytes.
+
+Hook threads perform no file I/O or input injection. They publish bounded
+records to a 256-entry ring; the existing worker emits `ui_latches_r5` and
+`ui_latch_state_r5`. TAB/chat/cursor calls receive pre/post snapshots.
+Menu-query records are edge-only. Remote AFK records are emitted on the first
+observation, a state edge, or a one-second heartbeat using a bounded
+128-object tracker. Logged values include caller RVA, frame/thread, scoreboard
+visibility, chat active/display mode, raw cursor mode and delayed-restore
+counter, GTA input-patch bytes, raw frontend/pause bytes, Win32
+foreground/focus/capture/cursor flags, remote sync state, last-sync tick,
+elapsed time, AFK state, and ped wrapper. The `pause_raw_b7cb49` label is
+deliberately raw and remains `TODO_VERIFY`; no R5 claim currently assigns it a
+stronger meaning.
+
+Select the profile without deploying or launching it with:
+
+```bash
+tools/windows/remote_lab/samp_lab.sh probe-profile ui-latches-r5
 ```
 
 Use `samp_probe_asset_paths.flag` for normal original-DLL golden traces. It logs interesting SA-MP asset opens, size queries, seeks, and closes. `samp_probe_file_hooks.flag` additionally hooks `ReadFile`; keep that for short, targeted runs only because original 0.3.7 performs large overlapped reads against the SAMP archives.

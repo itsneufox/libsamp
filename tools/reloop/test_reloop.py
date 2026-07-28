@@ -38,6 +38,54 @@ class ResultParsingTests(unittest.TestCase):
         verdict, _warnings = reloop.classify_run([], 1, "", False)
         self.assertEqual(verdict, "PRECONNECT_CRASH")
 
+    def test_preconnect_streaming_timeout_uses_last_open_step(self):
+        client_logs = "\n".join([
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadSceneCollision phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadSceneCollision phase=end evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+        ])
+        verdict, warnings = reloop.classify_run([], 0, client_logs, True)
+        self.assertEqual(verdict, "HANG_PRECONNECT_STREAMING")
+        self.assertIn("reason=preconnect step=LoadScene phase=begin", warnings[0])
+        self.assertIn("Join/NetGame evidence absent", warnings[0])
+
+    def test_spawn_streaming_timeout_requires_join_evidence(self):
+        client_logs = "\n".join([
+            "rpc-auto-out id=25 name=ClientJoin nickname=ReLoop sent=1",
+            "rpc-in id=139 name=ScrInitGame local=implemented count=1",
+            "[sampdll-runtime] scene_prepare_step: reason=spawn "
+            "step=LoadSceneCollision phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=spawn "
+            "step=LoadSceneCollision phase=end evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=spawn "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+        ])
+        verdict, warnings = reloop.classify_run([], 0, client_logs, True)
+        self.assertEqual(verdict, "HANG_SPAWN_STREAMING")
+        self.assertIn("Join/NetGame evidence present", warnings[0])
+
+    def test_closed_streaming_step_is_not_classified_as_hang(self):
+        client_logs = "\n".join([
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=end evidence=PROBE_TRACE",
+        ])
+        verdict, _warnings = reloop.classify_run([], 0, client_logs, True)
+        self.assertEqual(verdict, "PRECONNECT_CRASH")
+
+    def test_exception_marker_takes_precedence_over_open_streaming_step(self):
+        client_logs = "\n".join([
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] exception_filter: code=0xc0000005",
+        ])
+        verdict, _warnings = reloop.classify_run([], 1, client_logs, True)
+        self.assertEqual(verdict, "PRECONNECT_CRASH")
+
     def test_failure_is_state_mismatch(self):
         lines = [
             "[test_cmds] request=1 marker=RUN_START status=ACTION",
@@ -50,7 +98,10 @@ class ResultParsingTests(unittest.TestCase):
     def test_crash_retry_requires_remaining_attempt(self):
         self.assertTrue(reloop.should_retry_crash("PRECONNECT_CRASH", 1, 3))
         self.assertTrue(reloop.should_retry_crash("RUNTIME_CRASH", 2, 3))
+        self.assertTrue(reloop.should_retry_crash("HANG_PRECONNECT_STREAMING", 1, 3))
+        self.assertTrue(reloop.should_retry_crash("HANG_SPAWN_STREAMING", 2, 3))
         self.assertFalse(reloop.should_retry_crash("RUNTIME_CRASH", 3, 3))
+        self.assertFalse(reloop.should_retry_crash("HANG_SPAWN_STREAMING", 3, 3))
         self.assertFalse(reloop.should_retry_crash("STATE_MISMATCH", 1, 3))
 
     def test_retry_wrapper_enforces_three_attempt_minimum(self):

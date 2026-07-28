@@ -203,6 +203,36 @@ if(SAMPDLL_BUILD_TESTS)
 
   add_test(NAME gta_quaternion_compat COMMAND test_gta_quaternion_compat)
 
+  add_executable(test_gta_camera_aim_compat
+    tests/test_gta_camera_aim_compat.c
+  )
+  target_include_directories(test_gta_camera_aim_compat
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+  if(NOT WIN32)
+    target_link_libraries(test_gta_camera_aim_compat PRIVATE m)
+  endif()
+
+  add_test(NAME gta_camera_aim_compat COMMAND test_gta_camera_aim_compat)
+
+  add_executable(test_pickup_pool_compat
+    tests/test_pickup_pool_compat.c
+  )
+
+  add_test(NAME pickup_pool_compat COMMAND test_pickup_pool_compat)
+
+  add_executable(test_remote_edge_cursor_compat
+    tests/test_remote_edge_cursor_compat.c
+  )
+  target_include_directories(test_remote_edge_cursor_compat
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+
+  add_test(NAME remote_edge_cursor_compat
+           COMMAND test_remote_edge_cursor_compat)
+
   add_executable(test_saa
     tests/test_saa.c
   )
@@ -290,6 +320,18 @@ if(SAMPDLL_BUILD_TESTS)
     target_link_libraries(test_raknet_bridge PRIVATE sampdll_net)
 
     add_test(NAME raknet_bridge COMMAND test_raknet_bridge)
+
+    add_executable(test_raknet_remote_edge_sync
+      tests/test_raknet_remote_edge_sync.cpp
+    )
+    target_include_directories(test_raknet_remote_edge_sync
+      PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
+    )
+    target_link_libraries(test_raknet_remote_edge_sync PRIVATE sampdll_net)
+
+    add_test(NAME raknet_remote_edge_sync
+             COMMAND test_raknet_remote_edge_sync)
 
     if(NOT WIN32)
       add_executable(test_raknet_offline_status_delivery

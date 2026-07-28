@@ -331,6 +331,7 @@ typedef struct samp_raknet_join_profile {
 #define SAMP_RAKNET_VEHICLE_ACTION_LINK_INTERIOR 11u
 #define SAMP_RAKNET_VEHICLE_ACTION_SET_NUMBER_PLATE 12u
 #define SAMP_RAKNET_VEHICLE_ACTION_SET_PARAMS_FOR_PLAYER 13u
+#define SAMP_RAKNET_VEHICLE_ACTION_SET_TYRE_STATUS 14u
 #define SAMP_RAKNET_VEHICLE_PARAM_BYTES 16u
 #define SAMP_RAKNET_VEHICLE_NUMBER_PLATE_BYTES 33u
 #define SAMP_RAKNET_ANIM_LIB_BYTES 64u
@@ -437,6 +438,52 @@ typedef struct samp_raknet_remote_bullet_sync {
   float hit_position[3];
   float offset[3];
 } samp_raknet_remote_bullet_sync;
+
+/*
+ * STATIC_037:
+ * R5 handlers at samp.dll+0x9A40/+0x9E20/+0x9D30 read packet ID, the
+ * authoritative uint16 player ID, then the original packed 67/54/24-byte
+ * client payload respectively. Binary SHA256:
+ * b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+ * Keep the packed payload nested so its wire layout remains tied to the
+ * sender-side ABI assertions above.
+ */
+typedef struct samp_raknet_remote_unoccupied_sync {
+  uint32_t seq;
+  uint16_t player_id;
+  samp_raknet_unoccupied_sync sync;
+} samp_raknet_remote_unoccupied_sync;
+
+typedef struct samp_raknet_remote_trailer_sync {
+  uint32_t seq;
+  uint16_t player_id;
+  samp_raknet_trailer_sync sync;
+} samp_raknet_remote_trailer_sync;
+
+typedef struct samp_raknet_remote_passenger_sync {
+  uint32_t seq;
+  uint16_t player_id;
+  samp_raknet_passenger_sync sync;
+} samp_raknet_remote_passenger_sync;
+
+#define SAMP_RAKNET_REMOTE_MOVEMENT_ONFOOT 1u
+#define SAMP_RAKNET_REMOTE_MOVEMENT_DRIVER 2u
+#define SAMP_RAKNET_REMOTE_MOVEMENT_PASSENGER 3u
+#define SAMP_RAKNET_REMOTE_MOVEMENT_UNOCCUPIED 4u
+#define SAMP_RAKNET_REMOTE_MOVEMENT_TRAILER 5u
+
+typedef struct samp_raknet_remote_movement_sync {
+  uint32_t seq;
+  uint8_t type;
+  uint8_t reserved[3];
+  union {
+    samp_raknet_remote_onfoot_sync onfoot;
+    samp_raknet_remote_vehicle_sync driver;
+    samp_raknet_remote_passenger_sync passenger;
+    samp_raknet_remote_unoccupied_sync unoccupied;
+    samp_raknet_remote_trailer_sync trailer;
+  } state;
+} samp_raknet_remote_movement_sync;
 
 typedef struct samp_raknet_map_icon_event {
   uint32_t seq;
@@ -1015,6 +1062,41 @@ typedef struct samp_raknet_rpc_probe_snapshot {
    * executes GTA opcode 03FD with the received uint32 level. */
   uint32_t legacy_drunk_handling_seq;
   uint32_t legacy_drunk_handling_level;
+  /*
+   * Appended for ABI stability.
+   * STATIC_037: RPC 48 at samp.dll+0x1DCC0 / local-player setter +0x17D10.
+   */
+  uint32_t virtual_world_seq;
+  int32_t virtual_world;
+  /*
+   * STATIC_037: RPC 167 at samp.dll+0x17DE0 and collision wrappers
+   * +0xA5AC0/+0xA5B10/+0xA5BB0/+0xA5C50/+0xA5CF0.
+   */
+  uint32_t remote_vehicle_collisions_disabled_seq;
+  uint8_t remote_vehicle_collisions_disabled;
+  uint8_t remote_vehicle_collisions_reserved[3];
+  /*
+   * Appended for ABI stability. STATIC_037: R5 packet handlers 209/210/211 at
+   * samp.dll+0x9A40/+0x9E20/+0x9D30 and stores at
+   * +0x158D0/+0x15C90/+0x17440.
+   */
+  uint32_t remote_unoccupied_sync_count;
+  uint32_t remote_trailer_sync_count;
+  uint32_t remote_passenger_sync_count;
+  samp_raknet_remote_unoccupied_sync
+      remote_unoccupied_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
+  samp_raknet_remote_trailer_sync
+      remote_trailer_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
+  samp_raknet_remote_passenger_sync
+      remote_passenger_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
+  /*
+   * Appended for ABI stability. This ring preserves Receive() order across
+   * OnFoot/Driver (channel 0) and Passenger/Unoccupied/Trailer (channel 1)
+   * packet types.
+   */
+  uint32_t remote_movement_sync_count;
+  samp_raknet_remote_movement_sync
+      remote_movement_syncs[SAMP_RAKNET_REMOTE_PLAYER_SYNC_RING];
 } samp_raknet_rpc_probe_snapshot;
 
 /*
@@ -1032,6 +1114,15 @@ int samp_raknet_client_drain_packets(void *client, int max_packets);
 int samp_raknet_client_drain_packets_autojoin(void *client, int max_packets, const samp_raknet_join_profile *profile,
                                               int *out_connected, int *out_join_sent, int *out_last_packet_id);
 
+/*
+ * Formats the connected peer's RakNet transport counters using the verbose
+ * layout consumed by SA-MP 0.3.7-R5's F5 overlay.  The two rate outputs are
+ * sampled one-second byte deltas and are optional.
+ */
+int samp_raknet_client_format_transport_statistics(
+    void *client, char *out_text, uint32_t out_text_size,
+    double *out_download_kbytes_per_second,
+    double *out_upload_kbytes_per_second);
 int samp_raknet_client_get_rpc_probe_snapshot(void *client, samp_raknet_rpc_probe_snapshot *out_snapshot);
 int samp_raknet_client_get_actor_state(void *client, uint16_t actor_id, samp_raknet_actor_state *out_state);
 int samp_raknet_client_get_object_material(void *client, uint16_t object_id, uint32_t object_generation,

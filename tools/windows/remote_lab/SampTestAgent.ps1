@@ -30,11 +30,20 @@ function Invoke-AgentCommand {
     $action = ([string]$Command.action).ToLowerInvariant()
     switch ($action) {
         "ping" {
+            $config = Get-SampLabConfig -Root $Root
+            $gameDir = [string]$config.game_dir
             return [pscustomobject]@{
                 action = $action
                 user = [Environment]::UserDomainName + "\" + [Environment]::UserName
                 session_id = [Diagnostics.Process]::GetCurrentProcess().SessionId
                 processes = @(Get-SampLabProcesses)
+                game_dir = $gameDir
+                gta_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "gta_sa.exe")
+                samp_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "samp.dll")
+                samp_probe_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "samp_probe.asi")
+                reloop_control_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "reloop_control.asi")
+                autopause = Get-SampLabAutoPauseState -GameDir $gameDir
+                probe_flags = @(Get-SampLabProbeFlags -GameDir $gameDir)
             }
         }
         "screenshot" {

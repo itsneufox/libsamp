@@ -25,6 +25,7 @@ $runDir = Join-Path $Root ("runs\" + $runId)
 New-SampLabDirectory -Path $runDir
 
 $gameDir = [string]$config.game_dir
+$autoPauseState = Get-SampLabAutoPauseState -GameDir $gameDir
 $documentsDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
 $logDir = Join-Path (Join-Path $documentsDir "SA-MP Logs") $runId
 New-SampLabDirectory -Path $logDir
@@ -163,6 +164,10 @@ $manifest = [ordered]@{
     favorite_index = if ($FavoriteIndex -ge 0) { $FavoriteIndex } else { $null }
     gta_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "gta_sa.exe")
     samp_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "samp.dll")
+    samp_probe_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "samp_probe.asi")
+    reloop_control_sha256 = Get-SampLabHash -Path (Join-Path $gameDir "reloop_control.asi")
+    autopause = $autoPauseState
+    probe_flags = @(Get-SampLabProbeFlags -GameDir $gameDir)
     samp_re = [ordered]@{
         profile = $sampReMode
         mode = $sampReMode

@@ -2,8 +2,13 @@ cmake_minimum_required(VERSION 3.20)
 
 project(samp_probe_asi C)
 
+include(CTest)
+
 add_library(samp_probe MODULE
   src/samp_probe_asi.c
+  src/samp_probe_death_cleanup.c
+  src/samp_probe_pickup.c
+  src/samp_probe_ui_latches.c
 )
 
 set_target_properties(samp_probe PROPERTIES
@@ -37,4 +42,16 @@ if(MINGW)
     -Wl,-Map,$<TARGET_FILE_DIR:samp_probe>/samp_probe.map
     -static-libgcc
   )
+endif()
+
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME samp_probe_death_cleanup_exit_source_contract
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_death_cleanup_exit_source_contract.py
+    )
+  endif()
 endif()
