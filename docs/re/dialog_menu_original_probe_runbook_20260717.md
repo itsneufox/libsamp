@@ -15,10 +15,14 @@ the original client's outgoing:
 
 - `STATIC_037` + `PROBE_TRACE`: local R5 `CNetGame` pointer at
   `samp.dll+0x26eb94`.
-- `STATIC_037` + `PROBE_TRACE`: reconstructed legacy `CNetGame` places
-  RakClient first; the runtime object resolves slot 26 (`+0x68`) to
-  `samp.dll+0x345b0`. R5 disassembly shows that wrapper dereferences `RPCID*`,
-  copies an 8-byte packed `NetworkID`, and returns with `ret 0x24`.
+- `STATIC_037`: reconstructed legacy `CNetGame` places RakClient first. R5
+  ordinary BitStream sends dispatch through slot 25 (`+0x64`) to the short
+  wrapper at `samp.dll+0x34620`, which returns with `ret 0x18`. For example,
+  `CPickupPool::PickedUp` calls this slot at `samp.dll+0x134DE`.
+- `STATIC_037`: slot 26 (`+0x68`) is the distinct extended overload at
+  `samp.dll+0x345B0`; it copies an 8-byte packed `NetworkID` and returns with
+  `ret 0x24`. Hooking only that slot cannot observe ordinary short-overload
+  sends. The focused probe now guards slot 25 and exact target `+0x34620`.
 - `OPENMP_REF`: RPC 62 payload is `int16 dialogId`, `uint8 response`,
   `int16 listItem`, `dynstr8 input`.
 - `STATIC_037`: reconstructed legacy `CMenuPool::Process` sends RPC 132 with a

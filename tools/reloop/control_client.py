@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import time
 from pathlib import Path
@@ -76,6 +77,14 @@ def chat_command(client: ControlClient, command: str) -> None:
     client.command("window_key", vk=VK_RETURN)
 
 
+def request_samp_screenshot(client: ControlClient) -> dict[str, Any]:
+    """Use the guarded R5 request flag, with ordinary F8 for the replacement."""
+    try:
+        return client.command("samp_screenshot")
+    except RuntimeError:
+        return client.key(VK_F8, "tap")
+
+
 def run_scenario(output_path: Path, settle: float) -> None:
     states: list[dict[str, Any]] = []
     client = wait_for_api()
@@ -85,6 +94,12 @@ def run_scenario(output_path: Path, settle: float) -> None:
         # frames in the replacement. Wait until normal gameplay owns input.
         time.sleep(max(3.0, settle))
         baseline = sample(client, "baseline", states)
+
+        if os.environ.get("SAMP_RELOOP_RPC73_REPLACE") == "1":
+            chat_command(client, "/rpc73replace")
+            time.sleep(max(1.0, settle))
+            request_samp_screenshot(client)
+            time.sleep(0.4)
 
         # Chat: opening T must own the mouse and stop GTA control/camera input.
         client.command("char", code=ord("t"))
@@ -107,7 +122,7 @@ def run_scenario(output_path: Path, settle: float) -> None:
         chat_command(client, "/menutest")
         time.sleep(max(1.0, settle))
         sample(client, "legacy_menu_open", states)
-        client.key(VK_F8, "tap")
+        request_samp_screenshot(client)
         time.sleep(0.4)
         client.key(VK_DOWN, "tap")
         time.sleep(settle)
@@ -119,15 +134,30 @@ def run_scenario(output_path: Path, settle: float) -> None:
         time.sleep(max(1.0, settle))
         sample(client, "legacy_menu_closed", states)
 
-        # Scoreboard: TAB owns mouse/input; first player row is centered below header.
-        client.key(9, "down")
+        # OBSERVED_037 + PROBE_TRACE + STATIC_037:
+        # R5 WndProc toggles CScoreboard+0x0 on WM_KEYUP/VK_TAB
+        # (samp.dll+0x61785..+0x617B6). One complete pulse opens it and a
+        # second complete pulse closes it; visibility is not a physical-key
+        # hold.
+        client.key(9, "tap")
         time.sleep(settle)
         scoreboard = sample(client, "scoreboard_open", states)
         row_x = scoreboard["client_w"] // 2
         row_y = scoreboard["client_h"] // 2
-        # OBSERVED_037 calibration: R5 accepts RMB as the explicit scoreboard
-        # cursor trigger. The replacement already enables mouse mode on TAB;
-        # this event is harmless there and lets us compare the interactive path.
+        # OBSERVED_037 + PROBE_TRACE:
+        # Show already acquires R5 cursor mode 3, but that mode leaves GTA's
+        # gameplay-input call intact. Capture the exclusive scoreboard frame,
+        # then verify that ordinary movement remains available.
+        request_samp_screenshot(client)
+        time.sleep(0.4)
+        client.key(ord("W"), "down")
+        client.command("mouse", action="move", x=row_x + 45, y=row_y)
+        time.sleep(settle)
+        sample(client, "scoreboard_plain_input_attempt", states)
+        client.key(ord("W"), "up")
+        # OBSERVED_037 + PROBE_TRACE: Show already selects cursor mode 3.
+        # Exercise RMB as a forwarded GUI edge, but require GTA gameplay input
+        # to remain enabled just as it does before the edge.
         client.command("mouse", action="right_click", x=row_x, y=row_y)
         time.sleep(settle)
         sample(client, "scoreboard_mouse_mode", states)
@@ -146,7 +176,7 @@ def run_scenario(output_path: Path, settle: float) -> None:
         time.sleep(0.5)
         time.sleep(settle)
         sample(client, "scoreboard_clicked", states)
-        client.key(9, "up")
+        client.key(9, "tap")
         time.sleep(settle)
         sample(client, "scoreboard_closed", states)
     finally:

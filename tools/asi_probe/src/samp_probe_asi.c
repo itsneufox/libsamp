@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "samp_probe_death_cleanup.h"
+#include "samp_probe_pickup.h"
+#include "samp_probe_ui_latches.h"
+
 #define PROBE_LOG_NAME "samp_probe.log"
 #define PROBE_NO_HOOKS_FLAG "samp_probe_no_hooks.flag"
 #define PROBE_ASSET_PATHS_FLAG "samp_probe_asset_paths.flag"
@@ -22,6 +26,13 @@
 #define PROBE_ACTOR_HEAVY_FLAG "samp_probe_actor_heavy.flag"
 #define PROBE_RPC_GAP_HOOKS_FLAG "samp_probe_rpc_gap_hooks.flag"
 #define PROBE_DIALOG_MENU_RPC_HOOKS_FLAG "samp_probe_dialog_menu_rpc_hooks.flag"
+#define PROBE_TRAILER_SYNC_HOOKS_FLAG "samp_probe_trailer_sync_hooks.flag"
+#define PROBE_TRAILER_PHYSICS_HOOKS_FLAG "samp_probe_trailer_physics_hooks.flag"
+#define PROBE_VEHICLE_LIFECYCLE_HOOKS_FLAG "samp_probe_vehicle_lifecycle_hooks.flag"
+#define PROBE_AIM_BULLET_JETPACK_HOOKS_FLAG "samp_probe_aim_bullet_jetpack_hooks.flag"
+#define PROBE_DEATH_CLEANUP_HOOKS_FLAG "samp_probe_death_cleanup_hooks.flag"
+#define PROBE_PICKUP_HOOKS_FLAG "samp_probe_pickup_hooks.flag"
+#define PROBE_UI_LATCHES_HOOKS_FLAG "samp_probe_ui_latches_hooks.flag"
 #define PROBE_MAX_IMPORT_LOGS 4096
 #define PROBE_WATCH_INTERVAL_MS 250
 #define PROBE_WAIT_FOR_SAMP_MS 30000
@@ -114,14 +125,126 @@
 #define PROBE_SAMP_R5_REMOTE_ACTOR_SET_HEALTH_RVA 0x0009c5d0u
 #define PROBE_SAMP_R5_REMOTE_ACTOR_SET_INVULNERABLE_RVA 0x0009c700u
 #define PROBE_SAMP_R5_REMOTE_ACTOR_SET_POSITION_RVA 0x0009f040u
+#define PROBE_SAMP_R5_TRAILER_SYNC_APPLY_RVA 0x00015c90u
+#define PROBE_SAMP_R5_VEHICLE_POOL_NEW_RVA 0x0001f080u
+#define PROBE_SAMP_R5_PLAYER_PED_PUT_DIRECTLY_IN_VEHICLE_RVA 0x000ac290u
+#define PROBE_SAMP_R5_AIM_CONTEXT_INSTALL_RVA 0x0009c9c0u
+#define PROBE_SAMP_R5_AIM_CONTEXT_RESTORE_RVA 0x0009c960u
+#define PROBE_SAMP_R5_PLAYER_PED_SET_KEYS_RVA 0x000af340u
+#define PROBE_SAMP_R5_PLAYER_PED_SET_SHOT_CONTEXT_RVA 0x000af280u
+#define PROBE_SAMP_R5_PLAYER_PED_FIRE_REMOTE_RVA 0x000afa70u
+#define PROBE_SAMP_R5_PLAYER_PED_START_JETPACK_RVA 0x000acd10u
+#define PROBE_SAMP_R5_PLAYER_PED_STOP_JETPACK_RVA 0x000acd60u
+#define PROBE_SAMP_R5_PLAYER_PED_IS_IN_JETPACK_RVA 0x000acdc0u
 #define PROBE_SAMP_R5_NETGAME_PTR_RVA 0x0026eb94u
-#define PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX 26u
+#define PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX 25u
+#define PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA 0x00034620u
 #define PROBE_SERVER_COMMAND_RPC 50u
 #define PROBE_DIALOG_RESPONSE_RPC 62u
+#define PROBE_PICKUP_RPC 131u
+#define PROBE_PICKUP_WEAPON_RPC 97u
 #define PROBE_MENU_SELECT_RPC 132u
 #define PROBE_MENU_QUIT_RPC 140u
 #define PROBE_DIALOG_MENU_RPC_MAX_BITS 8192u
 #define PROBE_SAMP_R5_NETGAME_POOLS_OFFSET 0x000003deu
+#define PROBE_SAMP_R5_POOLS_VEHICLE_POOL_OFFSET 0x00000000u
+#define PROBE_SAMP_R5_VEHICLE_POOL_WRAPPER_OFFSET 0x00001134u
+#define PROBE_SAMP_R5_VEHICLE_POOL_LISTED_OFFSET 0x00003074u
+#define PROBE_SAMP_R5_VEHICLE_POOL_CAPACITY 2000u
+#define PROBE_SAMP_R5_REMOTE_PLAYER_VEHICLE_WRAPPER_OFFSET 0x000001e1u
+#define PROBE_SAMP_R5_VEHICLE_WRAPPER_ENTITY_OFFSET 0x00000040u
+#define PROBE_SAMP_R5_VEHICLE_WRAPPER_GTA_VEHICLE_OFFSET 0x0000004cu
+#define PROBE_GTA_ENTITY_MATRIX_PTR_OFFSET 0x00000014u
+#define PROBE_GTA_VEHICLE_TRAILER_OFFSET 0x000004c8u
+#define PROBE_TRAILER_SYNC_TRACE_RING 256u
+#define PROBE_GTA_US10_IMAGE_BASE 0x00400000u
+#define PROBE_GTA_US10_TIMESTAMP 0x427101cau
+#define PROBE_GTA_US10_ENTRY_RVA 0x00424570u
+#define PROBE_GTA_US10_IMAGE_SIZE 0x01177000u
+#define PROBE_GTA_US10_CHECKSUM 0x00dc5beau
+#define PROBE_GTA_US10_CTRAILER_VTABLE 0x00871c28u
+#define PROBE_GTA_US10_CTRAILER_PROCESS_CONTROL_ADDR 0x006ced20u
+#define PROBE_GTA_US10_CTRAILER_SET_TOW_LINK_ADDR 0x006cfdf0u
+#define PROBE_GTA_US10_CAUTOMOBILE_PROCESS_CONTROL_ADDR 0x006b1880u
+#define PROBE_GTA_US10_FRAME_COUNTER_ADDR 0x00b7cb4cu
+#define PROBE_GTA_US10_GAME_TIME_ADDR 0x00b7cb84u
+#define PROBE_GTA_US10_TIME_STEP_ADDR 0x00b7cb5cu
+#define PROBE_GTA_US10_VEHICLE_POOL_PTR_ADDR 0x00b74494u
+#define PROBE_GTA_US10_VEHICLE_POOL_OBJECT_SIZE 0x00000a18u
+#define PROBE_GTA_ENTITY_FLAGS_OFFSET 0x0000001cu
+#define PROBE_GTA_ENTITY_STATUS_OFFSET 0x00000036u
+#define PROBE_GTA_PHYSICAL_FAKE_PHYSICS_OFFSET 0x000000b8u
+#define PROBE_GTA_VEHICLE_FLAGS_OFFSET 0x00000428u
+#define PROBE_GTA_VEHICLE_DRIVER_OFFSET 0x00000460u
+#define PROBE_GTA_TRAILER_TOWING_VEHICLE_OFFSET 0x000004c4u
+#define PROBE_GTA_TRAILER_SUPPORT_RATIO_X_OFFSET 0x000009e0u
+#define PROBE_GTA_TRAILER_SUPPORT_RATIO_Y_OFFSET 0x000009e4u
+#define PROBE_GTA_TRAILER_SUPPORT_HEIGHT_OFFSET 0x000009e8u
+#define PROBE_GTA_TRAILER_TOW_RATIO_X_OFFSET 0x000009ecu
+#define PROBE_GTA_TRAILER_TOW_RATIO_Y_OFFSET 0x000009f0u
+#define PROBE_GTA_AUTOMOBILE_WHEEL_COMPRESSION_OFFSET 0x000007d4u
+#define PROBE_GTA_AUTOMOBILE_WHEEL_COMPRESSION_PREV_OFFSET 0x000007e4u
+#define PROBE_GTA_AUTOMOBILE_SPRING_LENGTH_OFFSET 0x00000878u
+#define PROBE_GTA_AUTOMOBILE_LINE_LENGTH_OFFSET 0x00000888u
+#define PROBE_GTA_AUTOMOBILE_FRONT_HEIGHT_OFFSET 0x00000898u
+#define PROBE_GTA_AUTOMOBILE_REAR_HEIGHT_OFFSET 0x0000089cu
+#define PROBE_TRAILER_PHYSICS_TRACK_SLOTS 8u
+#define PROBE_TRAILER_PHYSICS_FRAME_LIMIT 64u
+#define PROBE_TRAILER_PHYSICS_TRACE_RING 512u
+#define PROBE_TRAILER_PHYSICS_EVENT_SET_TOW_LINK 1u
+#define PROBE_TRAILER_PHYSICS_EVENT_PROCESS_CONTROL 2u
+#define PROBE_TRAILER_PHYSICS_TIMING_FRAME_VALID 0x01u
+#define PROBE_TRAILER_PHYSICS_TIMING_GAME_TIME_VALID 0x02u
+#define PROBE_TRAILER_PHYSICS_TIMING_STEP_VALID 0x04u
+#define PROBE_TRAILER_PHYSICS_VEHICLE_COMMON_VALID 0x01u
+#define PROBE_TRAILER_PHYSICS_VEHICLE_MATRIX_VALID 0x02u
+#define PROBE_TRAILER_PHYSICS_VEHICLE_TRAILER_VALID 0x04u
+#define PROBE_VEHICLE_LIFECYCLE_TRACE_RING 256u
+#define PROBE_VEHICLE_LIFECYCLE_EVENT_POOL_NEW 1u
+#define PROBE_VEHICLE_LIFECYCLE_EVENT_PUT_DIRECT 2u
+#define PROBE_VEHICLE_LIFECYCLE_SOURCE_NONE 0u
+#define PROBE_VEHICLE_LIFECYCLE_SOURCE_RPC164 1u
+#define PROBE_VEHICLE_LIFECYCLE_SOURCE_POOL_RETRY 2u
+#define PROBE_VEHICLE_LIFECYCLE_SOURCE_REMOTE_SYNC 3u
+#define PROBE_VEHICLE_LIFECYCLE_SOURCE_RPC70 4u
+#define PROBE_VEHICLE_LIFECYCLE_SOURCE_INTERNAL 5u
+#define PROBE_SAMP_R5_PLAYER_PED_GTA_PED_OFFSET 0x000002a4u
+#define PROBE_GTA_PED_VEHICLE_OFFSET 0x0000058cu
+#define PROBE_SAMP_R5_PLAYER_PED_TABLE_RVA 0x0026bf10u
+#define PROBE_SAMP_R5_PLAYER_PED_TABLE_CAPACITY 210u
+#define PROBE_SAMP_R5_AIM_CONTEXT_PTR_RVA 0x001039c8u
+#define PROBE_SAMP_R5_AIM_CONTEXT_ARRAY_RVA 0x00144428u
+#define PROBE_SAMP_R5_AIM_CONTEXT_BYTES 0x30u
+#define PROBE_SAMP_R5_PLAYER_PED_INDEX_OFFSET 0x000002b0u
+#define PROBE_SAMP_R5_PLAYER_PED_SHOT_CONTEXT_OFFSET 0x000002fdu
+#define PROBE_SAMP_R5_PLAYER_PED_SHOT_ORIGIN_OFFSET 0x00000301u
+#define PROBE_SAMP_R5_PLAYER_PED_SHOT_HIT_OFFSET 0x0000030du
+#define PROBE_SAMP_R5_PLAYER_PED_SHOT_OFFSET_OFFSET 0x00000319u
+#define PROBE_SAMP_R5_PLAYER_PED_SHOT_TARGET_OFFSET 0x00000325u
+#define PROBE_SAMP_R5_PLAYER_PED_SHOT_ACTIVE_OFFSET 0x00000329u
+#define PROBE_GTA_PED_WEAPON_SLOTS_OFFSET 0x000005a0u
+#define PROBE_GTA_PED_CURRENT_WEAPON_SLOT_OFFSET 0x00000718u
+#define PROBE_GTA_WEAPON_SLOT_SIZE 0x0000001cu
+#define PROBE_GTA_PED_TASK_ROOTS_OFFSET 0x00000004u
+#define PROBE_GTA_PED_TASK_ROOT_COUNT 11u
+#define PROBE_GTA_PED_JETPACK_TASK_OFFSET 0x00000010u
+#define PROBE_AIM_BULLET_JETPACK_TRACE_RING 512u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_AIM_INSTALL 1u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_AIM_RESTORE 2u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_SET_KEYS 3u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_SHOT_CONTEXT 4u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_FIRE_REMOTE 5u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_START 6u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_STOP 7u
+#define PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_QUERY 8u
+#define PROBE_COMBAT_STATE_PLAYER_PED_VALID 0x00000001u
+#define PROBE_COMBAT_STATE_GTA_PED_VALID 0x00000002u
+#define PROBE_COMBAT_STATE_MATRIX_VALID 0x00000004u
+#define PROBE_COMBAT_STATE_AIM_VALID 0x00000008u
+#define PROBE_COMBAT_STATE_AIM_SOURCE_VALID 0x00000010u
+#define PROBE_COMBAT_STATE_TASKS_VALID 0x00000020u
+#define PROBE_COMBAT_STATE_WEAPON_VALID 0x00000040u
+#define PROBE_COMBAT_STATE_SHOT_VALID 0x00000080u
 #define PROBE_SAMP_R5_POOLS_ACTOR_POOL_OFFSET 0x00000010u
 #define PROBE_SAMP_R5_ACTOR_POOL_SIZE 0x00004e24u
 #define PROBE_SAMP_R5_ACTOR_POOL_CAPACITY 1000u
@@ -220,15 +343,24 @@ typedef struct probe_raknet_network_id {
   probe_raknet_player_id player_id;
   unsigned short local_system_id;
 } probe_raknet_network_id;
+
+typedef struct probe_samp_trailer_sync_r5 {
+  WORD vehicle_id;
+  float position[3];
+  float quaternion[4];
+  float move_speed[3];
+  float turn_speed[3];
+} probe_samp_trailer_sync_r5;
 #pragma pack(pop)
 
 typedef char probe_assert_bitstream_prefix_size[(sizeof(probe_raknet_bitstream_prefix) == 20) ? 1 : -1];
 typedef char probe_assert_player_id_size[(sizeof(probe_raknet_player_id) == 6) ? 1 : -1];
 typedef char probe_assert_network_id_size[(sizeof(probe_raknet_network_id) == 8) ? 1 : -1];
+typedef char probe_assert_trailer_sync_r5_size[(sizeof(probe_samp_trailer_sync_r5) == 54) ? 1 : -1];
 
 typedef BYTE(PROBE_THISCALL *probe_rakclient_rpc_bitstream_fn)(
-    void *, const BYTE *, probe_raknet_bitstream_prefix *, int, int, char, BYTE,
-    probe_raknet_network_id, probe_raknet_bitstream_prefix *);
+    void *, const BYTE *, probe_raknet_bitstream_prefix *, int, int, char,
+    BYTE);
 typedef HANDLE(WINAPI *probe_CreateFileA_fn)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
 typedef HANDLE(WINAPI *probe_CreateFileW_fn)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
 typedef BOOL(WINAPI *probe_ReadFile_fn)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
@@ -244,6 +376,24 @@ typedef int(__cdecl *probe_gta_col_add_slot_fn)(const char *);
 typedef int(__cdecl *probe_gta_col_load_buffer_fn)(int, void *, int);
 typedef void(PROBE_THISCALL *probe_gta_physical_add_fn)(void *);
 typedef void(PROBE_THISCALL *probe_samp_font5_method_fn)(void *);
+typedef void(PROBE_THISCALL *probe_samp_trailer_sync_apply_fn)(
+    void *, const probe_samp_trailer_sync_r5 *);
+typedef BYTE(PROBE_THISCALL *probe_gta_trailer_set_tow_link_fn)(
+    void *, void *, DWORD);
+typedef void(PROBE_THISCALL *probe_gta_trailer_process_control_fn)(void *);
+typedef int(PROBE_THISCALL *probe_samp_vehicle_pool_new_fn)(
+    void *, const void *);
+typedef void(PROBE_THISCALL *probe_samp_player_ped_put_direct_fn)(
+    void *, DWORD, DWORD);
+typedef void(WINAPI *probe_samp_aim_context_install_fn)(DWORD);
+typedef void(__cdecl *probe_samp_aim_context_restore_fn)(void);
+typedef void(PROBE_THISCALL *probe_samp_player_ped_set_keys_fn)(
+    void *, DWORD, DWORD, DWORD);
+typedef void(PROBE_THISCALL *probe_samp_player_ped_set_shot_context_fn)(
+    void *, const void *);
+typedef int(PROBE_THISCALL *probe_samp_player_ped_fire_remote_fn)(void *);
+typedef void(PROBE_THISCALL *probe_samp_player_ped_jetpack_void_fn)(void *);
+typedef int(PROBE_THISCALL *probe_samp_player_ped_jetpack_query_fn)(void *);
 typedef struct probe_samp_rpc_parameters_prefix {
   const BYTE *input;
   int number_of_bits_of_data;
@@ -391,6 +541,199 @@ typedef struct probe_code_hook {
   LONG installed;
 } probe_code_hook;
 
+typedef struct probe_trailer_live_snapshot {
+  DWORD vehicle_pool;
+  DWORD listed;
+  DWORD wrapper;
+  DWORD entity;
+  DWORD matrix;
+  DWORD gta_vehicle;
+  float position[3];
+  float move_speed[3];
+  float turn_speed[3];
+  BYTE valid;
+} probe_trailer_live_snapshot;
+
+typedef struct probe_trailer_sync_trace {
+  volatile LONG committed_seq;
+  LONG call_seq;
+  LONG event_seq;
+  DWORD tick;
+  DWORD remote_player;
+  DWORD towing_wrapper_pre;
+  DWORD towing_wrapper_post;
+  DWORD towing_gta_pre;
+  DWORD towing_gta_post;
+  DWORD live_trailer_gta_pre;
+  DWORD live_trailer_gta_post;
+  probe_samp_trailer_sync_r5 sync;
+  probe_trailer_live_snapshot before;
+  probe_trailer_live_snapshot after;
+  BYTE payload_valid;
+  BYTE association_pre;
+  BYTE association_post;
+  BYTE predicted_mode;
+} probe_trailer_sync_trace;
+
+typedef struct probe_trailer_physics_timing {
+  DWORD tick;
+  DWORD thread_id;
+  DWORD gta_frame;
+  DWORD game_time;
+  float time_step;
+  BYTE valid_mask;
+} probe_trailer_physics_timing;
+
+typedef struct probe_trailer_physics_vehicle_state {
+  DWORD object;
+  DWORD vtable;
+  DWORD matrix;
+  DWORD flags;
+  DWORD vehicle_flags;
+  DWORD driver;
+  DWORD passengers[8];
+  DWORD towing_vehicle;
+  DWORD trailer_vehicle;
+  float right[3];
+  float forward[3];
+  float up[3];
+  float position[3];
+  float move_speed[3];
+  float turn_speed[3];
+  float support[5];
+  float wheel_compression[4];
+  float wheel_compression_previous[4];
+  float spring_length[4];
+  float line_length[4];
+  float ride_height[2];
+  BYTE status;
+  BYTE fake_physics;
+  BYTE valid_mask;
+} probe_trailer_physics_vehicle_state;
+
+typedef struct probe_trailer_physics_pair_state {
+  probe_trailer_physics_timing timing;
+  probe_trailer_physics_vehicle_state trailer;
+  probe_trailer_physics_vehicle_state tractor;
+} probe_trailer_physics_pair_state;
+
+typedef struct probe_trailer_physics_trace {
+  volatile LONG committed_seq;
+  LONG ring_seq;
+  LONG event_seq;
+  LONG generation;
+  DWORD frame_index;
+  DWORD trailer;
+  DWORD tractor;
+  DWORD set_my_pos_raw;
+  BYTE kind;
+  BYTE result;
+  probe_trailer_physics_pair_state before;
+  probe_trailer_physics_pair_state after;
+} probe_trailer_physics_trace;
+
+typedef struct probe_trailer_physics_track {
+  volatile LONG generation;
+  volatile LONG next_frame;
+  DWORD trailer;
+  DWORD tractor;
+} probe_trailer_physics_track;
+
+typedef struct probe_vehicle_lifecycle_pool_state {
+  DWORD pool;
+  DWORD listed;
+  DWORD wrapper;
+  DWORD wrapper_entity;
+  DWORD gta_vehicle;
+  probe_trailer_physics_vehicle_state vehicle;
+  BYTE id_valid;
+} probe_vehicle_lifecycle_pool_state;
+
+typedef struct probe_vehicle_lifecycle_trace {
+  volatile LONG committed_seq;
+  LONG ring_seq;
+  LONG event_seq;
+  DWORD tick;
+  DWORD thread_id;
+  DWORD caller_rva;
+  DWORD hook_rva;
+  DWORD object;
+  DWORD input;
+  DWORD gta_vehicle_ref;
+  DWORD seat;
+  DWORD gta_ped;
+  DWORD ped_vehicle_pre;
+  DWORD ped_vehicle_post;
+  WORD vehicle_id;
+  BYTE kind;
+  BYTE source;
+  BYTE input_valid;
+  BYTE result;
+  probe_vehicle_lifecycle_pool_state before;
+  probe_vehicle_lifecycle_pool_state after;
+} probe_vehicle_lifecycle_trace;
+
+typedef struct probe_combat_shot_state {
+  DWORD header;
+  DWORD target;
+  DWORD active;
+  float origin[3];
+  float hit[3];
+  float offset[3];
+  BYTE valid;
+} probe_combat_shot_state;
+
+typedef struct probe_combat_ped_state {
+  DWORD valid_mask;
+  DWORD player_ped;
+  DWORD gta_ped;
+  DWORD ped_vtable;
+  DWORD matrix;
+  DWORD ped_flags;
+  DWORD ped_state;
+  DWORD intelligence;
+  DWORD jetpack_task;
+  DWORD jetpack_task_vtable;
+  DWORD aim_context;
+  DWORD aim_source;
+  DWORD aim_words[PROBE_SAMP_R5_AIM_CONTEXT_BYTES / sizeof(DWORD)];
+  DWORD aim_source_words[PROBE_SAMP_R5_AIM_CONTEXT_BYTES / sizeof(DWORD)];
+  DWORD task_roots[PROBE_GTA_PED_TASK_ROOT_COUNT];
+  DWORD weapon;
+  DWORD weapon_type;
+  DWORD weapon_state;
+  DWORD weapon_ammo_in_clip;
+  DWORD weapon_total_ammo;
+  float matrix_right[3];
+  float matrix_forward[3];
+  float matrix_up[3];
+  float matrix_position[3];
+  float aiming_rotation;
+  probe_combat_shot_state stored_shot;
+  BYTE player_index;
+  BYTE weapon_slot;
+} probe_combat_ped_state;
+
+typedef struct probe_aim_bullet_jetpack_trace {
+  volatile LONG committed_seq;
+  LONG ring_seq;
+  LONG event_seq;
+  DWORD tick;
+  DWORD thread_id;
+  DWORD gta_frame;
+  DWORD caller_rva;
+  DWORD hook_rva;
+  DWORD object;
+  DWORD input;
+  DWORD args[3];
+  DWORD result;
+  BYTE kind;
+  BYTE frame_valid;
+  probe_combat_shot_state input_shot;
+  probe_combat_ped_state before;
+  probe_combat_ped_state after;
+} probe_aim_bullet_jetpack_trace;
+
 typedef struct probe_asset_handle {
   HANDLE handle;
   char path[MAX_PATH];
@@ -491,6 +834,20 @@ static void *g_orig_gta_col_load_buffer;
 static void *g_orig_gta_physical_add;
 static void *g_orig_samp_font5_prepare;
 static void *g_orig_samp_font5_draw_dispatch;
+static void *g_orig_samp_trailer_sync_apply;
+static void *g_orig_samp_vehicle_pool_new;
+static void *g_orig_samp_player_ped_put_direct;
+static void *g_orig_samp_aim_context_install;
+static void *g_orig_samp_aim_context_restore;
+static void *g_orig_samp_player_ped_set_keys;
+static void *g_orig_samp_player_ped_set_shot_context;
+static void *g_orig_samp_player_ped_fire_remote;
+static void *g_orig_samp_player_ped_start_jetpack;
+static void *g_orig_samp_player_ped_stop_jetpack;
+static void *g_orig_samp_player_ped_is_in_jetpack;
+static void *g_orig_gta_trailer_set_tow_link;
+static void *g_orig_gta_trailer_process_control;
+static void *g_trailer_physics_gateway_allocation;
 static void *g_orig_gta_font_set_scale;
 static void *g_orig_gta_font_set_color;
 static void *g_orig_gta_font_set_style;
@@ -558,6 +915,35 @@ static LONG g_actor_rpc_call_count;
 static LONG g_actor_heavy_call_count;
 static LONG g_rpc_gap_call_count;
 static LONG g_rpc_gap_downstream_call_count;
+static volatile LONG g_trailer_trace_event_seq;
+static probe_trailer_sync_trace g_trailer_sync_trace_ring[PROBE_TRAILER_SYNC_TRACE_RING];
+static volatile LONG g_trailer_sync_trace_write_seq;
+static LONG g_trailer_sync_trace_flushed_seq;
+static LONG g_trailer_sync_trace_overflow_count;
+static probe_trailer_physics_trace
+    g_trailer_physics_trace_ring[PROBE_TRAILER_PHYSICS_TRACE_RING];
+static probe_trailer_physics_track
+    g_trailer_physics_tracks[PROBE_TRAILER_PHYSICS_TRACK_SLOTS];
+static volatile LONG g_trailer_physics_trace_write_seq;
+static LONG g_trailer_physics_trace_flushed_seq;
+static LONG g_trailer_physics_trace_overflow_count;
+static volatile LONG g_trailer_physics_generation;
+static volatile LONG g_trailer_physics_hook_attempted;
+static volatile LONG g_trailer_physics_hooks_installed;
+static BYTE g_trailer_physics_set_tow_link_saved[5];
+static BYTE g_trailer_physics_process_control_saved[8];
+static probe_vehicle_lifecycle_trace
+    g_vehicle_lifecycle_trace_ring[PROBE_VEHICLE_LIFECYCLE_TRACE_RING];
+static volatile LONG g_vehicle_lifecycle_trace_write_seq;
+static LONG g_vehicle_lifecycle_trace_flushed_seq;
+static LONG g_vehicle_lifecycle_trace_overflow_count;
+static volatile LONG g_vehicle_lifecycle_event_seq;
+static probe_aim_bullet_jetpack_trace
+    g_aim_bullet_jetpack_trace_ring[PROBE_AIM_BULLET_JETPACK_TRACE_RING];
+static volatile LONG g_aim_bullet_jetpack_trace_write_seq;
+static LONG g_aim_bullet_jetpack_trace_flushed_seq;
+static LONG g_aim_bullet_jetpack_trace_overflow_count;
+static volatile LONG g_aim_bullet_jetpack_event_seq;
 static volatile LONG g_actor_heavy_global_scope_depth;
 static LONG g_textdraw_current_font_style = -1;
 static LONG g_d3d_device_hooks_installed;
@@ -582,6 +968,13 @@ static int actor_hooks_enabled(void);
 static int actor_heavy_enabled(void);
 static int rpc_gap_hooks_enabled(void);
 static int dialog_menu_rpc_hooks_enabled(void);
+static int trailer_sync_hooks_enabled(void);
+static int trailer_physics_hooks_enabled(void);
+static int vehicle_lifecycle_hooks_enabled(void);
+static int aim_bullet_jetpack_hooks_enabled(void);
+static int death_cleanup_hooks_enabled(void);
+static int pickup_hooks_enabled(void);
+static int ui_latches_hooks_enabled(void);
 static PIMAGE_NT_HEADERS get_samp_nt_headers(void);
 static LONG CALLBACK probe_exception_handler(PEXCEPTION_POINTERS info);
 static int WINAPI hook_WSAStartup(WORD version, LPWSADATA data);
@@ -629,6 +1022,39 @@ static int __cdecl hook_gta_col_load_buffer(int slot, void *buffer, int size);
 static void PROBE_THISCALL hook_gta_physical_add(void *entity);
 static void PROBE_THISCALL hook_samp_font5_prepare(void *textdraw);
 static void PROBE_THISCALL hook_samp_font5_draw_dispatch(void *textdraw);
+static void PROBE_THISCALL hook_samp_trailer_sync_apply(
+    void *remote_player, const probe_samp_trailer_sync_r5 *sync);
+static int install_samp_trailer_sync_code_hook(int log_summary);
+static void flush_trailer_sync_trace_ring(void);
+static BYTE PROBE_THISCALL hook_gta_trailer_set_tow_link(
+    void *trailer, void *tractor, DWORD set_my_pos_raw);
+static void PROBE_THISCALL hook_gta_trailer_process_control(void *trailer);
+static int PROBE_THISCALL hook_samp_vehicle_pool_new(
+    void *vehicle_pool, const void *vehicle_info);
+static void PROBE_THISCALL hook_samp_player_ped_put_direct(
+    void *player_ped, DWORD gta_vehicle_ref, DWORD seat);
+static int install_samp_vehicle_lifecycle_hooks(int log_summary);
+static void uninstall_samp_vehicle_lifecycle_hooks(void);
+static void flush_vehicle_lifecycle_trace_ring(void);
+static void WINAPI hook_samp_aim_context_install(DWORD player_index);
+static void __cdecl hook_samp_aim_context_restore(void);
+static void PROBE_THISCALL hook_samp_player_ped_set_keys(
+    void *player_ped, DWORD keys, DWORD left_right, DWORD up_down);
+static void PROBE_THISCALL hook_samp_player_ped_set_shot_context(
+    void *player_ped, const void *shot_context);
+static int PROBE_THISCALL hook_samp_player_ped_fire_remote(void *player_ped);
+static void PROBE_THISCALL hook_samp_player_ped_start_jetpack(
+    void *player_ped);
+static void PROBE_THISCALL hook_samp_player_ped_stop_jetpack(
+    void *player_ped);
+static int PROBE_THISCALL hook_samp_player_ped_is_in_jetpack(
+    void *player_ped);
+static int install_samp_aim_bullet_jetpack_hooks(int log_summary);
+static void uninstall_samp_aim_bullet_jetpack_hooks(void);
+static void flush_aim_bullet_jetpack_trace_ring(void);
+static int install_gta_trailer_physics_hooks(int log_summary);
+static void uninstall_gta_trailer_physics_hooks(void);
+static void flush_trailer_physics_trace_ring(void);
 static void __cdecl hook_samp_actor_show(probe_samp_rpc_parameters_prefix *rpc);
 static void __cdecl hook_samp_actor_hide(probe_samp_rpc_parameters_prefix *rpc);
 static void __cdecl hook_samp_actor_apply_animation(probe_samp_rpc_parameters_prefix *rpc);
@@ -643,8 +1069,8 @@ static void __cdecl hook_samp_rpc_edit_attached_object(probe_samp_rpc_parameters
 static void __cdecl hook_samp_rpc_edit_object(probe_samp_rpc_parameters_prefix *rpc);
 static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
     void *rakclient, const BYTE *rpc_id_ptr, probe_raknet_bitstream_prefix *bitstream,
-    int priority, int reliability, char ordering_channel, BYTE shift_timestamp,
-    probe_raknet_network_id network_id, probe_raknet_bitstream_prefix *reply_from_target);
+    int priority, int reliability, char ordering_channel,
+    BYTE shift_timestamp);
 static int install_dialog_menu_rpc_hook(int log_summary);
 static void __cdecl hook_samp_remove_object(void *entity);
 static void __cdecl hook_samp_remove_static(void *entity);
@@ -860,6 +1286,113 @@ static probe_code_hook g_samp_code_hooks[] = {
      {0x83, 0xec, 0x10, 0x57}, 4, NULL, NULL, {0}, 0, 0},
     {"samp.ProcessNetworkPacket", 0x0003b950u, (void *)hook_samp_process_network_packet, &g_orig_samp_process_network_packet,
      {0x6a, 0xff, 0x68}, 3, NULL, NULL, {0}, 0, 0},
+};
+
+static probe_code_hook g_samp_trailer_sync_code_hook = {
+    /* STATIC_037:
+     * Original R5 samp.dll SHA256=
+     * b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+     * samp.dll+0x15C90 is the sole Packet-210 apply routine. It is a thiscall
+     * with one packed 54-byte TrailerSync pointer argument and returns with
+     * `ret 4`. The eight expected bytes contain three complete instructions
+     * and are relocation-free, so the generic trampoline is safe here. */
+    "samp.RemotePlayer.ApplyTrailerSync",
+    PROBE_SAMP_R5_TRAILER_SYNC_APPLY_RVA,
+    (void *)hook_samp_trailer_sync_apply,
+    &g_orig_samp_trailer_sync_apply,
+    {0x83, 0xec, 0x4c, 0x53, 0x8b, 0x5c, 0x24, 0x54},
+    8,
+    NULL,
+    NULL,
+    {0},
+    0,
+    0};
+
+static probe_code_hook g_samp_vehicle_lifecycle_code_hooks[] = {
+    /*
+     * STATIC_037:
+     * Original R5 samp.dll SHA256=
+     * b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+     * These entry spans contain only complete relocation-free instructions.
+     * install_samp_vehicle_lifecycle_hooks() also validates every known
+     * return tail before changing either target.
+     */
+    {"samp.VehiclePool.New", PROBE_SAMP_R5_VEHICLE_POOL_NEW_RVA,
+     (void *)hook_samp_vehicle_pool_new, &g_orig_samp_vehicle_pool_new,
+     {0x56, 0x8b, 0x74, 0x24, 0x08}, 5, NULL, NULL, {0}, 0, 0},
+    {"samp.CPlayerPed.PutDirectlyInVehicle",
+     PROBE_SAMP_R5_PLAYER_PED_PUT_DIRECTLY_IN_VEHICLE_RVA,
+     (void *)hook_samp_player_ped_put_direct,
+     &g_orig_samp_player_ped_put_direct,
+     {0x53, 0x8b, 0xd9, 0x8b, 0x83, 0xa4, 0x02, 0x00, 0x00}, 9,
+    NULL, NULL, {0}, 0, 0},
+};
+
+static probe_code_hook g_samp_aim_bullet_jetpack_code_hooks[] = {
+    /*
+     * STATIC_037 + TODO_VERIFY:
+     * Original R5 samp.dll SHA256=
+     * b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2.
+     * Every entry span below is exactly the complete-instruction patch span
+     * selected by calculate_patch_length(). None contains a relative branch
+     * or call. AimContext.Restore contains one PE HIGHLOW operand at relocation
+     * RVA +0x9C964; preflight_samp_aim_bullet_jetpack_hooks() normalizes it to
+     * the loaded R5 base and additionally checks every return/tail form before
+     * this all-or-nothing set is installed.
+     *
+     * ABI summary from the same image:
+     *  +0x9C9C0 WINAPI/stdcall(player_index), `ret 4`;
+     *  +0x9C960 cdecl(), `ret`;
+     *  +0xAF340 thiscall(CPlayerPed*, keys, LR, UD), `ret 0x0C`;
+     *  +0xAF280 thiscall(CPlayerPed*, shot*), `ret 4` or tail jump;
+     *  +0xAFA70 thiscall(CPlayerPed*), int return;
+     *  +0xACD10/+0xACD60 thiscall(CPlayerPed*), void return;
+     *  +0xACDC0 thiscall(CPlayerPed*), int return.
+     */
+    {"samp.AimContext.Install", PROBE_SAMP_R5_AIM_CONTEXT_INSTALL_RVA,
+     (void *)hook_samp_aim_context_install,
+     &g_orig_samp_aim_context_install,
+     {0x8b, 0x44, 0x24, 0x04, 0x56}, 5,
+     NULL, NULL, {0}, 0, 0},
+    {"samp.AimContext.Restore", PROBE_SAMP_R5_AIM_CONTEXT_RESTORE_RVA,
+     (void *)hook_samp_aim_context_restore,
+     &g_orig_samp_aim_context_restore,
+     {0x56, 0x57, 0x8b, 0x3d, 0xc8, 0x39, 0x10, 0x10}, 8,
+     NULL, NULL, {0}, 0, 0},
+    {"samp.CPlayerPed.SetKeys", PROBE_SAMP_R5_PLAYER_PED_SET_KEYS_RVA,
+     (void *)hook_samp_player_ped_set_keys,
+     &g_orig_samp_player_ped_set_keys,
+     {0x53, 0x55, 0x8b, 0xe9, 0x0f, 0xb6, 0x85, 0xb0, 0x02, 0x00, 0x00},
+     11, NULL, NULL, {0}, 0, 0},
+    {"samp.CPlayerPed.SetShotContext",
+     PROBE_SAMP_R5_PLAYER_PED_SET_SHOT_CONTEXT_RVA,
+     (void *)hook_samp_player_ped_set_shot_context,
+     &g_orig_samp_player_ped_set_shot_context,
+     {0x8b, 0x44, 0x24, 0x04, 0x85, 0xc0}, 6,
+     NULL, NULL, {0}, 0, 0},
+    {"samp.CPlayerPed.FireRemote", PROBE_SAMP_R5_PLAYER_PED_FIRE_REMOTE_RVA,
+     (void *)hook_samp_player_ped_fire_remote,
+     &g_orig_samp_player_ped_fire_remote,
+     {0x83, 0xec, 0x20, 0x56, 0x8b, 0xf1}, 6,
+     NULL, NULL, {0}, 0, 0},
+    {"samp.CPlayerPed.StartJetpack",
+     PROBE_SAMP_R5_PLAYER_PED_START_JETPACK_RVA,
+     (void *)hook_samp_player_ped_start_jetpack,
+     &g_orig_samp_player_ped_start_jetpack,
+     {0x8b, 0x81, 0xa4, 0x02, 0x00, 0x00}, 6,
+     NULL, NULL, {0}, 0, 0},
+    {"samp.CPlayerPed.StopJetpack",
+     PROBE_SAMP_R5_PLAYER_PED_STOP_JETPACK_RVA,
+     (void *)hook_samp_player_ped_stop_jetpack,
+     &g_orig_samp_player_ped_stop_jetpack,
+     {0x55, 0x8b, 0xec, 0x51, 0x56}, 5,
+     NULL, NULL, {0}, 0, 0},
+    {"samp.CPlayerPed.IsInJetpackMode",
+     PROBE_SAMP_R5_PLAYER_PED_IS_IN_JETPACK_RVA,
+     (void *)hook_samp_player_ped_is_in_jetpack,
+     &g_orig_samp_player_ped_is_in_jetpack,
+     {0x8b, 0x81, 0xa4, 0x02, 0x00, 0x00}, 6,
+     NULL, NULL, {0}, 0, 0},
 };
 
 static probe_code_hook g_samp_font5_code_hooks[] = {
@@ -1367,6 +1900,81 @@ static int dialog_menu_rpc_hooks_enabled(void) {
    * RPCs. The installer additionally validates NetGame, RakClient, vtable,
    * slot target and executable protection before changing the shared slot. */
   return env_or_flag_enabled("SAMP_PROBE_DIALOG_MENU_RPC_HOOKS", PROBE_DIALOG_MENU_RPC_HOOKS_FLAG);
+}
+
+static int trailer_sync_hooks_enabled(void) {
+  /* STATIC_037:
+   * This focused mode patches only the exact R5 Packet-210 apply entry and
+   * buffers raw pre/post state in memory. The worker flushes it later so the
+   * network/game thread never performs probe file I/O. The trailer-physics
+   * profile implies this trace where the loaded samp.dll has the exact R5
+   * identity, giving SetTowLink/ProcessControl/Packet210 one event clock. */
+  return env_or_flag_enabled("SAMP_PROBE_TRAILER_SYNC_HOOKS",
+                             PROBE_TRAILER_SYNC_HOOKS_FLAG) ||
+         trailer_physics_hooks_enabled();
+}
+
+static int trailer_physics_hooks_enabled(void) {
+  /* GTA_REVERSED_REF + STATIC_037 + TODO_VERIFY:
+   * This profile patches only exact GTA-SA 1.0 US CTrailer entry/tail bytes.
+   * Hooks write bounded snapshots to fixed storage and never perform I/O. */
+  return env_or_flag_enabled("SAMP_PROBE_TRAILER_PHYSICS_HOOKS",
+                             PROBE_TRAILER_PHYSICS_HOOKS_FLAG);
+}
+
+static int vehicle_lifecycle_hooks_enabled(void) {
+  /*
+   * STATIC_037 + TODO_VERIFY:
+   * Focused original-R5 vehicle creation and seating snapshots use a
+   * dedicated profile so no trailer, Winsock, render or unrelated RPC hooks
+   * perturb the calls being measured.
+   */
+  return env_or_flag_enabled("SAMP_PROBE_VEHICLE_LIFECYCLE_HOOKS",
+                             PROBE_VEHICLE_LIFECYCLE_HOOKS_FLAG);
+}
+
+static int aim_bullet_jetpack_hooks_enabled(void) {
+  /*
+   * STATIC_037 + TODO_VERIFY:
+   * Focused original-R5 aim, shot-dispatch, and jetpack lifecycle hooks use
+   * only exact byte/ABI-validated entries. Hook threads publish to a fixed
+   * ring and never write the log directly.
+   */
+  return env_or_flag_enabled("SAMP_PROBE_AIM_BULLET_JETPACK_HOOKS",
+                             PROBE_AIM_BULLET_JETPACK_HOOKS_FLAG);
+}
+
+static int death_cleanup_hooks_enabled(void) {
+  /*
+   * STATIC_037 + TODO_VERIFY:
+   * Focused R5 death/respawn/F4 and GMX/reconnect/quit snapshots use exact
+   * byte- and ABI-guarded entries. Hook threads publish to a fixed ring;
+   * only the existing worker writes the log.
+   */
+  return env_or_flag_enabled("SAMP_PROBE_DEATH_CLEANUP_HOOKS",
+                             PROBE_DEATH_CLEANUP_HOOKS_FLAG);
+}
+
+static int pickup_hooks_enabled(void) {
+  /*
+   * STATIC_037 + TODO_VERIFY:
+   * Focused original-R5 pickup collection and pool cadence snapshots use
+   * exact entry/tail guards. Hook threads and the shared outgoing-RPC hook
+   * publish to a bounded ring; only the worker writes the log.
+   */
+  return env_or_flag_enabled("SAMP_PROBE_PICKUP_HOOKS",
+                             PROBE_PICKUP_HOOKS_FLAG);
+}
+
+static int ui_latches_hooks_enabled(void) {
+  /*
+   * STATIC_037 + TODO_VERIFY:
+   * Focused original-R5 AFK/menu/TAB/chat/cursor edge snapshots use only
+   * identity- and byte-guarded entries. Hook threads publish to a fixed ring;
+   * only the existing worker writes the log.
+   */
+  return env_or_flag_enabled("SAMP_PROBE_UI_LATCHES_HOOKS",
+                             PROBE_UI_LATCHES_HOOKS_FLAG);
 }
 
 PROBE_ALWAYS_INLINE void *probe_return_address(void) {
@@ -3173,10 +3781,2922 @@ static int samp_r5_identity_matches(void) {
          nt->OptionalHeader.SizeOfImage == PROBE_SAMP_R5_IMAGE_SIZE;
 }
 
+static int samp_r5_relocation_identity_matches(void) {
+  PIMAGE_NT_HEADERS nt = get_samp_nt_headers();
+
+  /*
+   * STATIC_037:
+   * Relocation-normalized hook profiles additionally require the analyzed
+   * R5 image's i386 preferred-base header and a non-empty base-relocation
+   * directory. This validates the loader contract without requiring the
+   * discardable .reloc contents to remain resident after process startup.
+   */
+  return samp_r5_identity_matches() && nt != NULL &&
+         nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386 &&
+         (nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED) == 0 &&
+         nt->OptionalHeader.ImageBase ==
+             PROBE_SAMP_R5_PREFERRED_IMAGE_BASE &&
+         nt->OptionalHeader.NumberOfRvaAndSizes >
+             IMAGE_DIRECTORY_ENTRY_BASERELOC &&
+         nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC]
+                 .VirtualAddress != 0u &&
+         nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC]
+                 .Size != 0u;
+}
+
+static PIMAGE_NT_HEADERS get_gta_us10_nt_headers(void) {
+  HMODULE module = GetModuleHandleA(NULL);
+  PIMAGE_DOS_HEADER dos;
+  PIMAGE_NT_HEADERS nt;
+  uintptr_t base = (uintptr_t)module;
+
+  if (base != PROBE_GTA_US10_IMAGE_BASE ||
+      !memory_is_readable(base, sizeof(IMAGE_DOS_HEADER))) {
+    return NULL;
+  }
+  dos = (PIMAGE_DOS_HEADER)module;
+  if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 ||
+      (DWORD)dos->e_lfanew > PROBE_GTA_US10_IMAGE_SIZE - sizeof(IMAGE_NT_HEADERS) ||
+      !memory_is_readable(base + (DWORD)dos->e_lfanew,
+                          sizeof(IMAGE_NT_HEADERS))) {
+    return NULL;
+  }
+  nt = (PIMAGE_NT_HEADERS)(base + (DWORD)dos->e_lfanew);
+  if (nt->Signature != IMAGE_NT_SIGNATURE ||
+      nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+    return NULL;
+  }
+  return nt;
+}
+
+static int gta_us10_identity_matches(void) {
+  PIMAGE_NT_HEADERS nt = get_gta_us10_nt_headers();
+
+  /*
+   * GTA_REVERSED_REF + STATIC_037:
+   * Supported executable SHA256=
+   * a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26.
+   * The image has relocations stripped, so every absolute address below also
+   * requires its preferred 0x00400000 mapping in addition to this PE proxy.
+   */
+  return nt != NULL &&
+         nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386 &&
+         (nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED) != 0 &&
+         nt->FileHeader.TimeDateStamp == PROBE_GTA_US10_TIMESTAMP &&
+         nt->OptionalHeader.ImageBase == PROBE_GTA_US10_IMAGE_BASE &&
+         nt->OptionalHeader.AddressOfEntryPoint == PROBE_GTA_US10_ENTRY_RVA &&
+         nt->OptionalHeader.SizeOfImage == PROBE_GTA_US10_IMAGE_SIZE &&
+         nt->OptionalHeader.CheckSum == PROBE_GTA_US10_CHECKSUM;
+}
+
+static int probe_make_rel32(uintptr_t instruction, size_t instruction_size,
+                            uintptr_t target, int32_t *out_rel) {
+  int64_t delta;
+
+  if (out_rel == NULL || instruction > UINTPTR_MAX - instruction_size) {
+    return 0;
+  }
+  delta = (int64_t)(uint64_t)target -
+          (int64_t)(uint64_t)(instruction + instruction_size);
+  if (delta < INT32_MIN || delta > INT32_MAX) {
+    return 0;
+  }
+  *out_rel = (int32_t)delta;
+  return 1;
+}
+
+static int trailer_physics_patch_is_ours(uintptr_t target, size_t patch_len,
+                                         const void *replacement) {
+  int32_t rel = 0;
+  uintptr_t destination;
+  const BYTE *bytes = (const BYTE *)target;
+  size_t i;
+
+  if (replacement == NULL || patch_len < 5u ||
+      !memory_is_readable(target, patch_len) || bytes[0] != 0xe9) {
+    return 0;
+  }
+  memcpy(&rel, bytes + 1, sizeof(rel));
+  destination = target + 5u + (intptr_t)rel;
+  if (destination != (uintptr_t)replacement) {
+    return 0;
+  }
+  for (i = 5u; i < patch_len; ++i) {
+    if (bytes[i] != 0x90u) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int install_gta_trailer_physics_hooks(int log_summary) {
+#if defined(_M_IX86) || defined(__i386__)
+  static const BYTE expected_set_entry[5] = {
+      0x83, 0xec, 0x24, 0x56, 0x57};
+  static const BYTE expected_set_success_tail[10] = {
+      0x5f, 0xb0, 0x01, 0x5e, 0x83, 0xc4, 0x24, 0xc2, 0x08, 0x00};
+  static const BYTE expected_set_failure_tail[10] = {
+      0x5f, 0x32, 0xc0, 0x5e, 0x83, 0xc4, 0x24, 0xc2, 0x08, 0x00};
+  static const BYTE expected_process_entry[8] = {
+      0x56, 0x8b, 0xf1, 0xe8, 0x58, 0x2b, 0xfe, 0xff};
+  static const BYTE expected_process_tail[14] = {
+      0x89, 0x96, 0xe0, 0x09, 0x00, 0x00, 0x89,
+      0x86, 0xe4, 0x09, 0x00, 0x00, 0x5e, 0xc3};
+  const uintptr_t set_target =
+      PROBE_GTA_US10_CTRAILER_SET_TOW_LINK_ADDR;
+  const uintptr_t set_success_tail = 0x006cffc0u;
+  const uintptr_t set_failure_tail = 0x006cfe16u;
+  const uintptr_t process_target =
+      PROBE_GTA_US10_CTRAILER_PROCESS_CONTROL_ADDR;
+  const uintptr_t process_tail = 0x006cee41u;
+  BYTE *gateways = NULL;
+  BYTE set_patch[5];
+  BYTE process_patch[8];
+  int32_t rel_set_gateway_back;
+  int32_t rel_process_gateway_call;
+  int32_t rel_process_gateway_back;
+  int32_t rel_set_hook;
+  int32_t rel_process_hook;
+  DWORD set_old_protect = 0;
+  DWORD process_old_protect = 0;
+  DWORD ignored_protect = 0;
+  int set_unprotected = 0;
+  int process_unprotected = 0;
+  PIMAGE_NT_HEADERS nt;
+
+  if (!trailer_physics_hooks_enabled()) {
+    if (log_summary) {
+      probe_log("trailer_physics_hook: disabled by default; enable with "
+                "SAMP_PROBE_TRAILER_PHYSICS_HOOKS=1 or %s",
+                PROBE_TRAILER_PHYSICS_HOOKS_FLAG);
+    }
+    return 0;
+  }
+  if (InterlockedCompareExchange(&g_trailer_physics_hooks_installed, 0, 0) !=
+      0) {
+    return 0;
+  }
+  if (InterlockedCompareExchange(&g_trailer_physics_hook_attempted, 1, 0) !=
+      0) {
+    return 0;
+  }
+
+  nt = get_gta_us10_nt_headers();
+  if (!gta_us10_identity_matches()) {
+    if (log_summary) {
+      probe_log(
+          "trailer_physics_hook: skip unsupported_identity base=0x%08lx "
+          "headers_valid=%d timestamp=0x%08lx entry=0x%08lx "
+          "image_size=0x%08lx checksum=0x%08lx relocs_stripped=%d "
+          "supported_sha256="
+          "a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26 "
+          "evidence=GTA_REVERSED_REF,STATIC_037",
+          (unsigned long)(uintptr_t)GetModuleHandleA(NULL), nt != NULL,
+          (unsigned long)(nt != NULL ? nt->FileHeader.TimeDateStamp : 0u),
+          (unsigned long)(nt != NULL
+                              ? nt->OptionalHeader.AddressOfEntryPoint
+                              : 0u),
+          (unsigned long)(nt != NULL ? nt->OptionalHeader.SizeOfImage : 0u),
+          (unsigned long)(nt != NULL ? nt->OptionalHeader.CheckSum : 0u),
+          nt != NULL &&
+              (nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED) !=
+                  0);
+    }
+    InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+    return 0;
+  }
+
+  /*
+   * GTA_REVERSED_REF + STATIC_037:
+   * Preflight every entry and both SetTowLink/ProcessControl return paths
+   * before mutating either function. Exact-byte matching also refuses an
+   * existing third-party E9 rather than chasing or overwriting it.
+   */
+  if (!memory_is_readable(set_target, sizeof(expected_set_entry)) ||
+      !memory_is_readable(set_success_tail,
+                          sizeof(expected_set_success_tail)) ||
+      !memory_is_readable(set_failure_tail,
+                          sizeof(expected_set_failure_tail)) ||
+      !memory_is_readable(process_target, sizeof(expected_process_entry)) ||
+      !memory_is_readable(process_tail, sizeof(expected_process_tail)) ||
+      memcmp((const void *)set_target, expected_set_entry,
+             sizeof(expected_set_entry)) != 0 ||
+      memcmp((const void *)set_success_tail, expected_set_success_tail,
+             sizeof(expected_set_success_tail)) != 0 ||
+      memcmp((const void *)set_failure_tail, expected_set_failure_tail,
+             sizeof(expected_set_failure_tail)) != 0 ||
+      memcmp((const void *)process_target, expected_process_entry,
+             sizeof(expected_process_entry)) != 0 ||
+      memcmp((const void *)process_tail, expected_process_tail,
+             sizeof(expected_process_tail)) != 0) {
+    if (log_summary) {
+      probe_log(
+          "trailer_physics_hook: skip exact_bytes_mismatch "
+          "set=0x%08lx set_success=0x%08lx set_failure=0x%08lx "
+          "process=0x%08lx process_tail=0x%08lx installed=0 "
+          "evidence=GTA_REVERSED_REF,STATIC_037",
+          (unsigned long)set_target, (unsigned long)set_success_tail,
+          (unsigned long)set_failure_tail, (unsigned long)process_target,
+          (unsigned long)process_tail);
+    }
+    InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+    return 0;
+  }
+
+  gateways = (BYTE *)VirtualAlloc(NULL, 32u, MEM_COMMIT | MEM_RESERVE,
+                                  PAGE_READWRITE);
+  if (gateways == NULL) {
+    if (log_summary) {
+      probe_log("trailer_physics_hook: gateway_alloc_failed error=%lu",
+                (unsigned long)GetLastError());
+    }
+    InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+    return 0;
+  }
+
+  /*
+   * SetTowLink starts with three complete relocation-free instructions, so
+   * its ten-byte gateway can replay those five bytes then jump to +5.
+   */
+  memcpy(gateways, expected_set_entry, sizeof(expected_set_entry));
+  gateways[5] = 0xe9;
+  /*
+   * ProcessControl starts `push esi; mov esi,ecx; call rel32`. Copying that
+   * rel32 through the generic trampoline would retarget the call incorrectly.
+   * Build the exact 13-byte gateway explicitly:
+   *   56 8b f1
+   *   e8 <CAutomobile::ProcessControl>
+   *   e9 <CTrailer::ProcessControl+8>
+   */
+  gateways[16] = 0x56;
+  gateways[17] = 0x8b;
+  gateways[18] = 0xf1;
+  gateways[19] = 0xe8;
+  gateways[24] = 0xe9;
+
+  if (!probe_make_rel32((uintptr_t)gateways + 5u, 5u, set_target + 5u,
+                        &rel_set_gateway_back) ||
+      !probe_make_rel32((uintptr_t)gateways + 19u, 5u,
+                        PROBE_GTA_US10_CAUTOMOBILE_PROCESS_CONTROL_ADDR,
+                        &rel_process_gateway_call) ||
+      !probe_make_rel32((uintptr_t)gateways + 24u, 5u, process_target + 8u,
+                        &rel_process_gateway_back) ||
+      !probe_make_rel32(set_target, 5u,
+                        (uintptr_t)(void *)hook_gta_trailer_set_tow_link,
+                        &rel_set_hook) ||
+      !probe_make_rel32(process_target, 5u,
+                        (uintptr_t)(void *)hook_gta_trailer_process_control,
+                        &rel_process_hook)) {
+    if (log_summary) {
+      probe_log("trailer_physics_hook: rel32_out_of_range installed=0");
+    }
+    (void)VirtualFree(gateways, 0, MEM_RELEASE);
+    InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+    return 0;
+  }
+  memcpy(gateways + 6, &rel_set_gateway_back,
+         sizeof(rel_set_gateway_back));
+  memcpy(gateways + 20, &rel_process_gateway_call,
+         sizeof(rel_process_gateway_call));
+  memcpy(gateways + 25, &rel_process_gateway_back,
+         sizeof(rel_process_gateway_back));
+  FlushInstructionCache(GetCurrentProcess(), gateways, 32u);
+  if (!VirtualProtect(gateways, 32u, PAGE_EXECUTE_READ, &ignored_protect)) {
+    if (log_summary) {
+      probe_log("trailer_physics_hook: gateway_protect_failed error=%lu",
+                (unsigned long)GetLastError());
+    }
+    (void)VirtualFree(gateways, 0, MEM_RELEASE);
+    InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+    return 0;
+  }
+
+  memset(set_patch, 0x90, sizeof(set_patch));
+  set_patch[0] = 0xe9;
+  memcpy(set_patch + 1, &rel_set_hook, sizeof(rel_set_hook));
+  memset(process_patch, 0x90, sizeof(process_patch));
+  process_patch[0] = 0xe9;
+  memcpy(process_patch + 1, &rel_process_hook, sizeof(rel_process_hook));
+
+  if (!VirtualProtect((void *)set_target, sizeof(set_patch),
+                      PAGE_EXECUTE_READWRITE, &set_old_protect)) {
+    if (log_summary) {
+      probe_log("trailer_physics_hook: set_VirtualProtect_failed error=%lu",
+                (unsigned long)GetLastError());
+    }
+    (void)VirtualFree(gateways, 0, MEM_RELEASE);
+    InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+    return 0;
+  }
+  set_unprotected = 1;
+  if (!VirtualProtect((void *)process_target, sizeof(process_patch),
+                      PAGE_EXECUTE_READWRITE, &process_old_protect)) {
+    if (log_summary) {
+      probe_log(
+          "trailer_physics_hook: process_VirtualProtect_failed error=%lu "
+          "installed=0",
+          (unsigned long)GetLastError());
+    }
+    (void)VirtualProtect((void *)set_target, sizeof(set_patch),
+                         set_old_protect, &ignored_protect);
+    (void)VirtualFree(gateways, 0, MEM_RELEASE);
+    InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+    return 0;
+  }
+  process_unprotected = 1;
+
+  memcpy(g_trailer_physics_set_tow_link_saved, (const void *)set_target,
+         sizeof(g_trailer_physics_set_tow_link_saved));
+  memcpy(g_trailer_physics_process_control_saved,
+         (const void *)process_target,
+         sizeof(g_trailer_physics_process_control_saved));
+  g_orig_gta_trailer_set_tow_link = gateways;
+  g_orig_gta_trailer_process_control = gateways + 16u;
+  g_trailer_physics_gateway_allocation = gateways;
+  MemoryBarrier();
+
+  /*
+   * Patch ProcessControl first. Until SetTowLink is patched there are no
+   * armed probe slots, so its hook immediately executes the dedicated
+   * gateway. Both target pages were made writable before either mutation.
+   */
+  memcpy((void *)process_target, process_patch, sizeof(process_patch));
+  FlushInstructionCache(GetCurrentProcess(), (const void *)process_target,
+                        sizeof(process_patch));
+  memcpy((void *)set_target, set_patch, sizeof(set_patch));
+  FlushInstructionCache(GetCurrentProcess(), (const void *)set_target,
+                        sizeof(set_patch));
+
+  if (process_unprotected) {
+    (void)VirtualProtect((void *)process_target, sizeof(process_patch),
+                         process_old_protect, &ignored_protect);
+  }
+  if (set_unprotected) {
+    (void)VirtualProtect((void *)set_target, sizeof(set_patch),
+                         set_old_protect, &ignored_protect);
+  }
+  InterlockedExchange(&g_trailer_physics_hooks_installed, 1);
+
+  if (log_summary) {
+    probe_log(
+        "trailer_physics_hook: summary installed=2 requested=2 "
+        "set_addr=0x%08lx set_patch=e9_rel32 restore=83ec245657 "
+        "process_addr=0x%08lx process_patch=e9_rel32_909090 "
+        "process_gateway=568bf1_e8_base_e9_plus8 frame_limit=%u "
+        "track_slots=%u ring=%u supported_sha256="
+        "a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26 "
+        "evidence=GTA_REVERSED_REF,STATIC_037,TODO_VERIFY",
+        (unsigned long)set_target, (unsigned long)process_target,
+        (unsigned)PROBE_TRAILER_PHYSICS_FRAME_LIMIT,
+        (unsigned)PROBE_TRAILER_PHYSICS_TRACK_SLOTS,
+        (unsigned)PROBE_TRAILER_PHYSICS_TRACE_RING);
+  }
+  return 2;
+#else
+  if (log_summary && trailer_physics_hooks_enabled()) {
+    probe_log("trailer_physics_hook: skip unsupported_arch installed=0");
+  }
+  InterlockedExchange(&g_trailer_physics_hook_attempted, -1);
+  return 0;
+#endif
+}
+
+static void uninstall_gta_trailer_physics_hooks(void) {
+#if defined(_M_IX86) || defined(__i386__)
+  const uintptr_t set_target =
+      PROBE_GTA_US10_CTRAILER_SET_TOW_LINK_ADDR;
+  const uintptr_t process_target =
+      PROBE_GTA_US10_CTRAILER_PROCESS_CONTROL_ADDR;
+  DWORD old_protect = 0;
+  DWORD ignored_protect = 0;
+  int set_ours;
+  int process_ours;
+
+  if (InterlockedCompareExchange(&g_trailer_physics_hooks_installed, 0, 0) ==
+      0) {
+    return;
+  }
+  set_ours = trailer_physics_patch_is_ours(
+      set_target, sizeof(g_trailer_physics_set_tow_link_saved),
+      (const void *)hook_gta_trailer_set_tow_link);
+  process_ours = trailer_physics_patch_is_ours(
+      process_target, sizeof(g_trailer_physics_process_control_saved),
+      (const void *)hook_gta_trailer_process_control);
+
+  if (process_ours &&
+      VirtualProtect((void *)process_target,
+                     sizeof(g_trailer_physics_process_control_saved),
+                     PAGE_EXECUTE_READWRITE, &old_protect)) {
+    memcpy((void *)process_target,
+           g_trailer_physics_process_control_saved,
+           sizeof(g_trailer_physics_process_control_saved));
+    FlushInstructionCache(
+        GetCurrentProcess(), (const void *)process_target,
+        sizeof(g_trailer_physics_process_control_saved));
+    (void)VirtualProtect(
+        (void *)process_target,
+        sizeof(g_trailer_physics_process_control_saved), old_protect,
+        &ignored_protect);
+  }
+  if (set_ours &&
+      VirtualProtect((void *)set_target,
+                     sizeof(g_trailer_physics_set_tow_link_saved),
+                     PAGE_EXECUTE_READWRITE, &old_protect)) {
+    memcpy((void *)set_target, g_trailer_physics_set_tow_link_saved,
+           sizeof(g_trailer_physics_set_tow_link_saved));
+    FlushInstructionCache(
+        GetCurrentProcess(), (const void *)set_target,
+        sizeof(g_trailer_physics_set_tow_link_saved));
+    (void)VirtualProtect(
+        (void *)set_target, sizeof(g_trailer_physics_set_tow_link_saved),
+        old_protect, &ignored_protect);
+  }
+  probe_log(
+      "trailer_physics_hook: restore set_owned=%d process_owned=%d "
+      "set_restored=%d process_restored=%d gateway_lifetime=process",
+      set_ours, process_ours,
+      set_ours &&
+          memcmp((const void *)set_target,
+                 g_trailer_physics_set_tow_link_saved,
+                 sizeof(g_trailer_physics_set_tow_link_saved)) == 0,
+      process_ours &&
+          memcmp((const void *)process_target,
+                 g_trailer_physics_process_control_saved,
+                 sizeof(g_trailer_physics_process_control_saved)) == 0);
+  InterlockedExchange(&g_trailer_physics_hooks_installed, 0);
+#endif
+}
+
+static int install_samp_trailer_sync_code_hook(int log_summary) {
+  static const BYTE expected_epilogue[] = {
+      0x5f, 0x5e, 0x5d, 0x5b, 0x83, 0xc4, 0x4c, 0xc2, 0x04, 0x00};
+  const DWORD epilogue_rva = PROBE_SAMP_R5_TRAILER_SYNC_APPLY_RVA + 0x303u;
+  int installed;
+
+  if (!trailer_sync_hooks_enabled()) {
+    if (log_summary) {
+      probe_log("trailer_sync_code_hook: disabled by default; enable with "
+                "SAMP_PROBE_TRAILER_SYNC_HOOKS=1 or %s",
+                PROBE_TRAILER_SYNC_HOOKS_FLAG);
+    }
+    return 0;
+  }
+  if (env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS")) {
+    if (log_summary) {
+      probe_log("trailer_sync_code_hook: disabled by SAMP_PROBE_NO_SAMP_CODE_HOOKS");
+    }
+    return 0;
+  }
+  if (!samp_r5_identity_matches()) {
+    if (log_summary) {
+      PIMAGE_NT_HEADERS actual_nt = get_samp_nt_headers();
+      probe_log("trailer_sync_code_hook: skip unsupported_identity "
+                "headers_valid=%d timestamp=0x%08lx entry=0x%08lx "
+                "header_size=0x%08lx module_size=0x%08lx supported_sha256="
+                "b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2 "
+                "evidence=STATIC_037",
+                actual_nt != NULL,
+                (unsigned long)(actual_nt != NULL ? actual_nt->FileHeader.TimeDateStamp : 0u),
+                (unsigned long)(actual_nt != NULL ? actual_nt->OptionalHeader.AddressOfEntryPoint : 0u),
+                (unsigned long)(actual_nt != NULL ? actual_nt->OptionalHeader.SizeOfImage : 0u),
+                (unsigned long)g_samp_size);
+    }
+    return 0;
+  }
+  if (epilogue_rva > g_samp_size - sizeof(expected_epilogue) ||
+      !memory_is_readable(g_samp_base + epilogue_rva, sizeof(expected_epilogue)) ||
+      memcmp((const void *)(g_samp_base + epilogue_rva), expected_epilogue,
+             sizeof(expected_epilogue)) != 0) {
+    if (log_summary) {
+      probe_log("trailer_sync_code_hook: skip epilogue_mismatch rva=0x%08lx "
+                "evidence=STATIC_037",
+                (unsigned long)epilogue_rva);
+    }
+    InterlockedExchange(&g_samp_trailer_sync_code_hook.installed, -1);
+    return 0;
+  }
+
+  installed = install_samp_code_hook(&g_samp_trailer_sync_code_hook);
+  if (log_summary) {
+    probe_log("trailer_sync_code_hook: summary installed=%d requested=1 "
+              "rva=0x%08lx prologue=83ec4c538b5c2454 epilogue=5f5e5d5b83c44cc20400 "
+              "supported_sha256="
+              "b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2 "
+              "evidence=STATIC_037",
+              installed, (unsigned long)PROBE_SAMP_R5_TRAILER_SYNC_APPLY_RVA);
+  }
+  return installed;
+}
+
+static int preflight_samp_vehicle_lifecycle_hooks(void) {
+  static const BYTE vehicle_new_success_tail[] = {
+      0x5f, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x5e, 0xc2, 0x04, 0x00};
+  static const BYTE vehicle_new_failure_tail[] = {
+      0x5f, 0x33, 0xc0, 0x5e, 0xc2, 0x04, 0x00};
+  static const BYTE put_direct_tail[] = {
+      0x5e, 0x5f, 0x5d, 0x5b, 0xc2, 0x08, 0x00};
+  const DWORD vehicle_new_success_rva =
+      PROBE_SAMP_R5_VEHICLE_POOL_NEW_RVA + 0x191u;
+  const DWORD vehicle_new_failure_rva =
+      PROBE_SAMP_R5_VEHICLE_POOL_NEW_RVA + 0x19bu;
+  const DWORD put_direct_tail_rva =
+      PROBE_SAMP_R5_PLAYER_PED_PUT_DIRECTLY_IN_VEHICLE_RVA + 0x176u;
+  size_t i;
+
+  for (i = 0;
+       i < sizeof(g_samp_vehicle_lifecycle_code_hooks) /
+               sizeof(g_samp_vehicle_lifecycle_code_hooks[0]);
+       ++i) {
+    probe_code_hook *hook = &g_samp_vehicle_lifecycle_code_hooks[i];
+    uintptr_t target;
+    size_t readable_len;
+    size_t patch_len;
+
+    if (hook->expected_len < 5u ||
+        hook->expected_len > sizeof(hook->expected) ||
+        hook->expected_len > PROBE_INLINE_HOOK_MAX_COPY) {
+      return 0;
+    }
+    readable_len = hook->expected_len > 8u ? hook->expected_len : 8u;
+    if (readable_len > g_samp_size || hook->rva >= g_samp_size ||
+        hook->rva > g_samp_size - readable_len) {
+      return 0;
+    }
+    target = g_samp_base + hook->rva;
+    if (!memory_is_readable(target, readable_len) ||
+        memcmp((const void *)target, hook->expected,
+               hook->expected_len) != 0) {
+      return 0;
+    }
+    patch_len = calculate_patch_length((void *)target);
+    if (patch_len != hook->expected_len) {
+      return 0;
+    }
+  }
+
+  /*
+   * STATIC_037:
+   * Validate both VehiclePool::New returns, the shared PutDirectlyInVehicle
+   * return before patching the first entry.
+   */
+  return vehicle_new_success_rva <=
+             g_samp_size - sizeof(vehicle_new_success_tail) &&
+         vehicle_new_failure_rva <=
+             g_samp_size - sizeof(vehicle_new_failure_tail) &&
+         put_direct_tail_rva <= g_samp_size - sizeof(put_direct_tail) &&
+         memory_is_readable(g_samp_base + vehicle_new_success_rva,
+                            sizeof(vehicle_new_success_tail)) &&
+         memory_is_readable(g_samp_base + vehicle_new_failure_rva,
+                            sizeof(vehicle_new_failure_tail)) &&
+         memory_is_readable(g_samp_base + put_direct_tail_rva,
+                            sizeof(put_direct_tail)) &&
+         memcmp((const void *)(g_samp_base + vehicle_new_success_rva),
+                vehicle_new_success_tail,
+                sizeof(vehicle_new_success_tail)) == 0 &&
+         memcmp((const void *)(g_samp_base + vehicle_new_failure_rva),
+                vehicle_new_failure_tail,
+                sizeof(vehicle_new_failure_tail)) == 0 &&
+         memcmp((const void *)(g_samp_base + put_direct_tail_rva),
+                put_direct_tail, sizeof(put_direct_tail)) == 0;
+}
+
+static int install_samp_vehicle_lifecycle_hooks(int log_summary) {
+  size_t hook_count = sizeof(g_samp_vehicle_lifecycle_code_hooks) /
+                      sizeof(g_samp_vehicle_lifecycle_code_hooks[0]);
+  size_t already_installed = 0u;
+  size_t i;
+  int installed = 0;
+
+  if (!vehicle_lifecycle_hooks_enabled()) {
+    return 0;
+  }
+  if (env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS")) {
+    if (log_summary) {
+      probe_log("vehicle_lifecycle_hook: disabled by "
+                "SAMP_PROBE_NO_SAMP_CODE_HOOKS");
+    }
+    return 0;
+  }
+  if (!samp_r5_relocation_identity_matches() ||
+      !gta_us10_identity_matches()) {
+    if (log_summary) {
+      probe_log(
+          "vehicle_lifecycle_hook: skip unsupported_identity installed=0 "
+          "samp_r5=%d gta_us10=%d "
+          "supported_sha256="
+          "b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2 "
+          "gta_sha256="
+          "a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26 "
+          "evidence=STATIC_037,GTA_REVERSED_REF",
+          samp_r5_identity_matches(), gta_us10_identity_matches());
+    }
+    return 0;
+  }
+
+  for (i = 0u; i < hook_count; ++i) {
+    LONG state = InterlockedCompareExchange(
+        &g_samp_vehicle_lifecycle_code_hooks[i].installed, 0, 0);
+    if (state == 1) {
+      ++already_installed;
+    } else if (state != 0) {
+      return 0;
+    }
+  }
+  if (already_installed == hook_count) {
+    return 0;
+  }
+  if (already_installed != 0u ||
+      !preflight_samp_vehicle_lifecycle_hooks()) {
+    if (log_summary) {
+      probe_log(
+          "vehicle_lifecycle_hook: skip preflight_or_partial_state "
+          "installed=%u requested=%u evidence=STATIC_037",
+          (unsigned)already_installed, (unsigned)hook_count);
+    }
+    for (i = 0u; i < hook_count; ++i) {
+      if (InterlockedCompareExchange(
+              &g_samp_vehicle_lifecycle_code_hooks[i].installed, 0, 0) ==
+          0) {
+        InterlockedExchange(
+            &g_samp_vehicle_lifecycle_code_hooks[i].installed, -1);
+      }
+    }
+    return 0;
+  }
+
+  for (i = 0u; i < hook_count; ++i) {
+    installed +=
+        install_samp_code_hook(&g_samp_vehicle_lifecycle_code_hooks[i]);
+  }
+  if ((size_t)installed != hook_count) {
+    probe_log(
+        "vehicle_lifecycle_hook: incomplete_install installed=%d "
+        "requested=%u restoring=1",
+        installed, (unsigned)hook_count);
+    uninstall_samp_vehicle_lifecycle_hooks();
+    return 0;
+  }
+  if (log_summary) {
+    probe_log(
+        "vehicle_lifecycle_hook: summary installed=%d requested=%u "
+        "new_rva=0x%08lx new_patch=568b742408 "
+        "put_rva=0x%08lx put_patch=538bd98b83a4020000 "
+        "restore=saved_exact_bytes ring=%u supported_sha256="
+        "b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2 "
+        "gta_sha256="
+        "a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26 "
+        "evidence=STATIC_037,GTA_REVERSED_REF,TODO_VERIFY",
+        installed, (unsigned)hook_count,
+        (unsigned long)PROBE_SAMP_R5_VEHICLE_POOL_NEW_RVA,
+        (unsigned long)PROBE_SAMP_R5_PLAYER_PED_PUT_DIRECTLY_IN_VEHICLE_RVA,
+        (unsigned)PROBE_VEHICLE_LIFECYCLE_TRACE_RING);
+  }
+  return installed;
+}
+
+static void uninstall_samp_vehicle_lifecycle_hooks(void) {
+  size_t hook_count = sizeof(g_samp_vehicle_lifecycle_code_hooks) /
+                      sizeof(g_samp_vehicle_lifecycle_code_hooks[0]);
+  size_t i;
+
+  for (i = hook_count; i > 0u; --i) {
+    probe_code_hook *hook = &g_samp_vehicle_lifecycle_code_hooks[i - 1u];
+    uintptr_t target;
+    DWORD old_protect = 0u;
+    DWORD ignored_protect = 0u;
+    int owned;
+    int restored = 0;
+
+    if (InterlockedCompareExchange(&hook->installed, 0, 0) != 1 ||
+        hook->saved_len < 5u || hook->saved_len > sizeof(hook->saved) ||
+        hook->rva >= g_samp_size ||
+        hook->rva > g_samp_size - hook->saved_len) {
+      continue;
+    }
+    target = g_samp_base + hook->rva;
+    owned = trailer_physics_patch_is_ours(
+        target, hook->saved_len, hook->replacement);
+    if (owned &&
+        VirtualProtect((void *)target, hook->saved_len,
+                       PAGE_EXECUTE_READWRITE, &old_protect)) {
+      memcpy((void *)target, hook->saved, hook->saved_len);
+      FlushInstructionCache(GetCurrentProcess(), (const void *)target,
+                            hook->saved_len);
+      (void)VirtualProtect((void *)target, hook->saved_len, old_protect,
+                           &ignored_protect);
+      restored = memcmp((const void *)target, hook->saved,
+                        hook->saved_len) == 0;
+    }
+    probe_log(
+        "vehicle_lifecycle_hook: restore name=%s rva=0x%08lx owned=%d "
+        "restored=%d trampoline_lifetime=process",
+        hook->name, (unsigned long)hook->rva, owned, restored);
+    InterlockedExchange(&hook->installed, restored ? 0 : -1);
+  }
+}
+
+static int samp_r5_exact_bytes_match(DWORD rva, const BYTE *bytes,
+                                     size_t size) {
+  return bytes != NULL && size != 0u && size <= g_samp_size &&
+         rva < g_samp_size &&
+         rva <= g_samp_size - size &&
+         memory_is_readable(g_samp_base + rva, size) &&
+         memcmp((const void *)(g_samp_base + rva), bytes, size) == 0;
+}
+
+static int samp_r5_relocated_dword_bytes_match(
+    DWORD rva, const BYTE *preferred_bytes, size_t size,
+    size_t operand_offset, DWORD *runtime_operand_out) {
+  BYTE expected[PROBE_INLINE_HOOK_MAX_COPY];
+  DWORD preferred_operand;
+  DWORD referenced_rva;
+  DWORD runtime_operand;
+
+  /*
+   * STATIC_037:
+   * This helper is intentionally limited to one known PE HIGHLOW DWORD inside
+   * a short, otherwise exact byte span. It does not wildcard arbitrary image
+   * bytes. The preferred operand must point back into the identity-checked R5
+   * image, and only the module-base delta is applied before comparison.
+   */
+  if (preferred_bytes == NULL || size == 0u || size > sizeof(expected) ||
+      operand_offset > size ||
+      sizeof(preferred_operand) > size - operand_offset) {
+    return 0;
+  }
+  memcpy(expected, preferred_bytes, size);
+  memcpy(&preferred_operand, preferred_bytes + operand_offset,
+         sizeof(preferred_operand));
+  if (preferred_operand < PROBE_SAMP_R5_PREFERRED_IMAGE_BASE) {
+    return 0;
+  }
+  referenced_rva =
+      preferred_operand - PROBE_SAMP_R5_PREFERRED_IMAGE_BASE;
+  if (referenced_rva >= g_samp_size ||
+      g_samp_base > (uintptr_t)(0xffffffffu - referenced_rva)) {
+    return 0;
+  }
+  runtime_operand = (DWORD)(g_samp_base + (uintptr_t)referenced_rva);
+  memcpy(expected + operand_offset, &runtime_operand,
+         sizeof(runtime_operand));
+  if (!samp_r5_exact_bytes_match(rva, expected, size)) {
+    return 0;
+  }
+  if (runtime_operand_out != NULL) {
+    *runtime_operand_out = runtime_operand;
+  }
+  return 1;
+}
+
+static int preflight_samp_aim_bullet_jetpack_hooks(void) {
+  static const BYTE aim_restore_entry_preferred[] = {
+      0x56, 0x57, 0x8b, 0x3d, 0xc8, 0x39, 0x10, 0x10};
+  static const BYTE aim_install_tail[] = {
+      0x5f, 0x5e, 0xc2, 0x04, 0x00};
+  static const BYTE aim_restore_tail[] = {
+      0x5f, 0x5e, 0xc3};
+  static const BYTE set_keys_tail[] = {
+      0x5f, 0x5e, 0x5d, 0x5b, 0xc2, 0x0c, 0x00};
+  static const BYTE shot_return_tail[] = {
+      0x5f, 0xc2, 0x04, 0x00};
+  static const BYTE shot_local_tail_jump[] = {
+      0x5f, 0x89, 0x44, 0x24, 0x04, 0xe9, 0x8c, 0x78, 0xf5, 0xff};
+  static const BYTE fire_tail[] = {
+      0x5f, 0xb8, 0x01, 0x00, 0x00, 0x00,
+      0x5e, 0x83, 0xc4, 0x20, 0xc3};
+  static const BYTE jetpack_start_tail[] = {
+      0x8b, 0x0d, 0x78, 0x39, 0x11, 0x10,
+      0xc6, 0x01, 0x00, 0xc3};
+  static const BYTE jetpack_stop_tail[] = {
+      0x5e, 0x8b, 0xe5, 0x5d, 0xc3};
+  static const BYTE jetpack_query_success_tail[] = {
+      0x8b, 0x10, 0x33, 0xc9, 0x81, 0xfa, 0xc4, 0x05,
+      0x87, 0x00, 0x0f, 0x94, 0xc1, 0x8b, 0xc1, 0xc3};
+  static const BYTE jetpack_query_failure_tail[] = {
+      0x33, 0xc0, 0xc3};
+  struct probe_tail_check {
+    DWORD rva;
+    const BYTE *bytes;
+    size_t size;
+    int rebased_operand_offset;
+  };
+  static const struct probe_tail_check tails[] = {
+      {PROBE_SAMP_R5_AIM_CONTEXT_INSTALL_RVA + 0x1fu,
+       aim_install_tail, sizeof(aim_install_tail), -1},
+      {PROBE_SAMP_R5_AIM_CONTEXT_RESTORE_RVA + 0x14u,
+       aim_restore_tail, sizeof(aim_restore_tail), -1},
+      {PROBE_SAMP_R5_PLAYER_PED_SET_KEYS_RVA + 0x288u,
+       set_keys_tail, sizeof(set_keys_tail), -1},
+      {PROBE_SAMP_R5_PLAYER_PED_SET_SHOT_CONTEXT_RVA + 0x1eu,
+       shot_return_tail, sizeof(shot_return_tail), -1},
+      {PROBE_SAMP_R5_PLAYER_PED_SET_SHOT_CONTEXT_RVA + 0xaau,
+       shot_local_tail_jump, sizeof(shot_local_tail_jump), -1},
+      {PROBE_SAMP_R5_PLAYER_PED_FIRE_REMOTE_RVA + 0x1e7u,
+       fire_tail, sizeof(fire_tail), -1},
+      {PROBE_SAMP_R5_PLAYER_PED_START_JETPACK_RVA + 0x39u,
+       jetpack_start_tail, sizeof(jetpack_start_tail), 2},
+      {PROBE_SAMP_R5_PLAYER_PED_STOP_JETPACK_RVA + 0x53u,
+       jetpack_stop_tail, sizeof(jetpack_stop_tail), -1},
+      {PROBE_SAMP_R5_PLAYER_PED_IS_IN_JETPACK_RVA + 0x22u,
+       jetpack_query_success_tail, sizeof(jetpack_query_success_tail), -1},
+      {PROBE_SAMP_R5_PLAYER_PED_IS_IN_JETPACK_RVA + 0x32u,
+       jetpack_query_failure_tail, sizeof(jetpack_query_failure_tail), -1},
+  };
+  size_t hook_count =
+      sizeof(g_samp_aim_bullet_jetpack_code_hooks) /
+      sizeof(g_samp_aim_bullet_jetpack_code_hooks[0]);
+  DWORD aim_restore_runtime_operand = 0u;
+  DWORD jetpack_runtime_operand = 0u;
+  size_t i;
+
+  for (i = 0u; i < hook_count; ++i) {
+    probe_code_hook *hook = &g_samp_aim_bullet_jetpack_code_hooks[i];
+    size_t readable_len;
+    size_t patch_len;
+    uintptr_t target;
+
+    if (hook->expected_len < 5u ||
+        hook->expected_len > sizeof(hook->expected) ||
+        hook->expected_len > PROBE_INLINE_HOOK_MAX_COPY) {
+      return 0;
+    }
+    readable_len = hook->expected_len > 8u ? hook->expected_len : 8u;
+    if (hook->rva >= g_samp_size ||
+        hook->rva > g_samp_size - readable_len) {
+      return 0;
+    }
+    target = g_samp_base + hook->rva;
+    if (!memory_is_readable(target, readable_len)) {
+      return 0;
+    }
+    if (hook->rva == PROBE_SAMP_R5_AIM_CONTEXT_RESTORE_RVA) {
+      /*
+       * STATIC_037:
+       * PE relocation +0x9C964 covers the absolute operand of
+       * `mov edi,ds:[samp.dll+0x1039C8]`. Seed the generic installer with the
+       * exact validated runtime bytes so its trampoline replays the loader-
+       * relocated instruction.
+       */
+      if (hook->expected_len != sizeof(aim_restore_entry_preferred) ||
+          !samp_r5_relocated_dword_bytes_match(
+              hook->rva, aim_restore_entry_preferred,
+              sizeof(aim_restore_entry_preferred), 4u,
+              &aim_restore_runtime_operand)) {
+        return 0;
+      }
+      memcpy(hook->expected, aim_restore_entry_preferred,
+             sizeof(aim_restore_entry_preferred));
+      memcpy(hook->expected + 4u, &aim_restore_runtime_operand,
+             sizeof(aim_restore_runtime_operand));
+    } else if (memcmp((const void *)target, hook->expected,
+                      hook->expected_len) != 0) {
+      return 0;
+    }
+    patch_len = calculate_patch_length((void *)target);
+    if (patch_len != hook->expected_len) {
+      return 0;
+    }
+  }
+  for (i = 0u; i < sizeof(tails) / sizeof(tails[0]); ++i) {
+    if (tails[i].rebased_operand_offset >= 0) {
+      /*
+       * STATIC_037:
+       * PE relocation +0xACD4B covers the samp.dll+0x113978 global used by
+       * the StartJetpack epilogue. Every surrounding byte remains exact.
+       */
+      if (!samp_r5_relocated_dword_bytes_match(
+              tails[i].rva, tails[i].bytes, tails[i].size,
+              (size_t)tails[i].rebased_operand_offset,
+              &jetpack_runtime_operand)) {
+        return 0;
+      }
+    } else if (!samp_r5_exact_bytes_match(
+                   tails[i].rva, tails[i].bytes, tails[i].size)) {
+      return 0;
+    }
+  }
+  probe_log(
+      "aim_bullet_jetpack_hook: relocation_preflight_ok "
+      "samp_base=0x%08lx delta=0x%08lx "
+      "operand_9c964=0x%08lx operand_acd4b=0x%08lx "
+      "guard=identity,samp_relocation_normalized,gta_preferred_base "
+      "evidence=STATIC_037",
+      (unsigned long)(DWORD)g_samp_base,
+      (unsigned long)((DWORD)g_samp_base -
+                      PROBE_SAMP_R5_PREFERRED_IMAGE_BASE),
+      (unsigned long)aim_restore_runtime_operand,
+      (unsigned long)jetpack_runtime_operand);
+  return 1;
+}
+
+static int install_samp_aim_bullet_jetpack_hooks(int log_summary) {
+  size_t hook_count =
+      sizeof(g_samp_aim_bullet_jetpack_code_hooks) /
+      sizeof(g_samp_aim_bullet_jetpack_code_hooks[0]);
+  size_t already_installed = 0u;
+  size_t i;
+  int installed = 0;
+
+  if (!aim_bullet_jetpack_hooks_enabled()) {
+    return 0;
+  }
+  if (env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS")) {
+    if (log_summary) {
+      probe_log(
+          "aim_bullet_jetpack_hook: disabled by "
+          "SAMP_PROBE_NO_SAMP_CODE_HOOKS");
+    }
+    return 0;
+  }
+  /*
+   * STATIC_037 + GTA_REVERSED_REF:
+   * R5 has a PE relocation table and is observed at non-preferred bases on
+   * native Windows. Its two guarded HIGHLOW operands are normalized during
+   * preflight. GTA-SA 1.0 US has relocations stripped and must remain at its
+   * fixed preferred base for the direct snapshot addresses below.
+   */
+  if (!samp_r5_identity_matches() || !gta_us10_identity_matches()) {
+    if (log_summary) {
+      probe_log(
+          "aim_bullet_jetpack_hook: skip unsupported_identity installed=0 "
+          "samp_r5_reloc=%d samp_base=0x%08lx samp_delta=0x%08lx "
+          "gta_us10=%d "
+          "guard=identity,samp_relocation_normalized,gta_preferred_base "
+          "supported_sha256="
+          "b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2 "
+          "gta_sha256="
+          "a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26 "
+          "evidence=STATIC_037,GTA_REVERSED_REF",
+          samp_r5_relocation_identity_matches(),
+          (unsigned long)(DWORD)g_samp_base,
+          (unsigned long)((DWORD)g_samp_base -
+                          PROBE_SAMP_R5_PREFERRED_IMAGE_BASE),
+          gta_us10_identity_matches());
+    }
+    return 0;
+  }
+
+  for (i = 0u; i < hook_count; ++i) {
+    LONG state = InterlockedCompareExchange(
+        &g_samp_aim_bullet_jetpack_code_hooks[i].installed, 0, 0);
+    if (state == 1) {
+      ++already_installed;
+    } else if (state != 0) {
+      return 0;
+    }
+  }
+  if (already_installed == hook_count) {
+    return 0;
+  }
+  if (already_installed != 0u ||
+      !preflight_samp_aim_bullet_jetpack_hooks()) {
+    if (log_summary) {
+      probe_log(
+          "aim_bullet_jetpack_hook: skip preflight_or_partial_state "
+          "installed=%u requested=%u evidence=STATIC_037,TODO_VERIFY",
+          (unsigned)already_installed, (unsigned)hook_count);
+    }
+    for (i = 0u; i < hook_count; ++i) {
+      if (InterlockedCompareExchange(
+              &g_samp_aim_bullet_jetpack_code_hooks[i].installed, 0, 0) ==
+          0) {
+        InterlockedExchange(
+            &g_samp_aim_bullet_jetpack_code_hooks[i].installed, -1);
+      }
+    }
+    return 0;
+  }
+
+  for (i = 0u; i < hook_count; ++i) {
+    installed += install_samp_code_hook(
+        &g_samp_aim_bullet_jetpack_code_hooks[i]);
+  }
+  if ((size_t)installed != hook_count) {
+    probe_log(
+        "aim_bullet_jetpack_hook: incomplete_install installed=%d "
+        "requested=%u restoring=1",
+        installed, (unsigned)hook_count);
+    uninstall_samp_aim_bullet_jetpack_hooks();
+    return 0;
+  }
+  if (log_summary) {
+    probe_log(
+        "aim_bullet_jetpack_hook: summary installed=%d requested=%u "
+        "samp_base=0x%08lx samp_delta=0x%08lx "
+        "aim=0x%08lx/0x%08lx keys=0x%08lx "
+        "shot=0x%08lx fire=0x%08lx jetpack=0x%08lx/0x%08lx/0x%08lx "
+        "restore=saved_exact_bytes ring=%u "
+        "guard=identity,samp_relocation_normalized,gta_preferred_base "
+        "supported_sha256="
+        "b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2 "
+        "evidence=STATIC_037,TODO_VERIFY",
+        installed, (unsigned)hook_count,
+        (unsigned long)(DWORD)g_samp_base,
+        (unsigned long)((DWORD)g_samp_base -
+                        PROBE_SAMP_R5_PREFERRED_IMAGE_BASE),
+        (unsigned long)PROBE_SAMP_R5_AIM_CONTEXT_INSTALL_RVA,
+        (unsigned long)PROBE_SAMP_R5_AIM_CONTEXT_RESTORE_RVA,
+        (unsigned long)PROBE_SAMP_R5_PLAYER_PED_SET_KEYS_RVA,
+        (unsigned long)PROBE_SAMP_R5_PLAYER_PED_SET_SHOT_CONTEXT_RVA,
+        (unsigned long)PROBE_SAMP_R5_PLAYER_PED_FIRE_REMOTE_RVA,
+        (unsigned long)PROBE_SAMP_R5_PLAYER_PED_START_JETPACK_RVA,
+        (unsigned long)PROBE_SAMP_R5_PLAYER_PED_STOP_JETPACK_RVA,
+        (unsigned long)PROBE_SAMP_R5_PLAYER_PED_IS_IN_JETPACK_RVA,
+        (unsigned)PROBE_AIM_BULLET_JETPACK_TRACE_RING);
+  }
+  return installed;
+}
+
+static void uninstall_samp_aim_bullet_jetpack_hooks(void) {
+  size_t hook_count =
+      sizeof(g_samp_aim_bullet_jetpack_code_hooks) /
+      sizeof(g_samp_aim_bullet_jetpack_code_hooks[0]);
+  size_t i;
+
+  for (i = hook_count; i > 0u; --i) {
+    probe_code_hook *hook =
+        &g_samp_aim_bullet_jetpack_code_hooks[i - 1u];
+    uintptr_t target;
+    DWORD old_protect = 0u;
+    DWORD ignored_protect = 0u;
+    int owned;
+    int restored = 0;
+
+    if (InterlockedCompareExchange(&hook->installed, 0, 0) != 1 ||
+        hook->saved_len < 5u || hook->saved_len > sizeof(hook->saved) ||
+        hook->rva >= g_samp_size ||
+        hook->rva > g_samp_size - hook->saved_len) {
+      continue;
+    }
+    target = g_samp_base + hook->rva;
+    owned = trailer_physics_patch_is_ours(
+        target, hook->saved_len, hook->replacement);
+    if (owned &&
+        VirtualProtect((void *)target, hook->saved_len,
+                       PAGE_EXECUTE_READWRITE, &old_protect)) {
+      memcpy((void *)target, hook->saved, hook->saved_len);
+      FlushInstructionCache(GetCurrentProcess(), (const void *)target,
+                            hook->saved_len);
+      (void)VirtualProtect((void *)target, hook->saved_len, old_protect,
+                           &ignored_protect);
+      restored = memcmp((const void *)target, hook->saved,
+                        hook->saved_len) == 0;
+    }
+    probe_log(
+        "aim_bullet_jetpack_hook: restore name=%s rva=0x%08lx owned=%d "
+        "restored=%d trampoline_lifetime=process",
+        hook->name, (unsigned long)hook->rva, owned, restored);
+    InterlockedExchange(&hook->installed, restored ? 0 : -1);
+  }
+}
+
+static float probe_abs_float(float value) {
+  return value < 0.0f ? -value : value;
+}
+
+static int capture_trailer_live_snapshot(WORD vehicle_id,
+                                         probe_trailer_live_snapshot *snapshot) {
+  DWORD netgame;
+  DWORD pools;
+  DWORD vehicle_pool;
+  DWORD wrapper;
+  DWORD entity;
+  DWORD matrix;
+
+  if (snapshot == NULL) {
+    return 0;
+  }
+  memset(snapshot, 0, sizeof(*snapshot));
+  if (vehicle_id == 0u || vehicle_id == 0xffffu ||
+      vehicle_id >= PROBE_SAMP_R5_VEHICLE_POOL_CAPACITY ||
+      g_samp_base == 0u) {
+    return 0;
+  }
+
+  netgame = read_u32_or(g_samp_base + PROBE_SAMP_R5_NETGAME_PTR_RVA, 0u);
+  pools = netgame != 0u
+              ? read_u32_or((uintptr_t)netgame + PROBE_SAMP_R5_NETGAME_POOLS_OFFSET, 0u)
+              : 0u;
+  vehicle_pool = pools != 0u
+                     ? read_u32_or((uintptr_t)pools + PROBE_SAMP_R5_POOLS_VEHICLE_POOL_OFFSET, 0u)
+                     : 0u;
+  snapshot->vehicle_pool = vehicle_pool;
+  if (vehicle_pool == 0u) {
+    return 0;
+  }
+
+  snapshot->listed = read_u32_or(
+      (uintptr_t)vehicle_pool + PROBE_SAMP_R5_VEHICLE_POOL_LISTED_OFFSET +
+          ((uintptr_t)vehicle_id * sizeof(DWORD)),
+      0u);
+  wrapper = read_u32_or(
+      (uintptr_t)vehicle_pool + PROBE_SAMP_R5_VEHICLE_POOL_WRAPPER_OFFSET +
+          ((uintptr_t)vehicle_id * sizeof(DWORD)),
+      0u);
+  snapshot->wrapper = wrapper;
+  if (snapshot->listed == 0u || wrapper == 0u) {
+    return 0;
+  }
+
+  entity = read_u32_or((uintptr_t)wrapper + PROBE_SAMP_R5_VEHICLE_WRAPPER_ENTITY_OFFSET, 0u);
+  snapshot->gta_vehicle =
+      read_u32_or((uintptr_t)wrapper + PROBE_SAMP_R5_VEHICLE_WRAPPER_GTA_VEHICLE_OFFSET, 0u);
+  snapshot->entity = entity;
+  if (entity == 0u) {
+    return 0;
+  }
+  matrix = read_u32_or((uintptr_t)entity + PROBE_GTA_ENTITY_MATRIX_PTR_OFFSET, 0u);
+  snapshot->matrix = matrix;
+  if (matrix == 0u ||
+      !memory_is_readable((uintptr_t)matrix + PROBE_GTA_MATRIX_POSITION_OFFSET,
+                          sizeof(snapshot->position)) ||
+      !memory_is_readable((uintptr_t)entity + PROBE_GTA_PHYSICAL_MOVE_SPEED_OFFSET,
+                          sizeof(snapshot->move_speed)) ||
+      !memory_is_readable((uintptr_t)entity + PROBE_GTA_PHYSICAL_TURN_SPEED_OFFSET,
+                          sizeof(snapshot->turn_speed))) {
+    return 0;
+  }
+
+  memcpy(snapshot->position,
+         (const void *)((uintptr_t)matrix + PROBE_GTA_MATRIX_POSITION_OFFSET),
+         sizeof(snapshot->position));
+  memcpy(snapshot->move_speed,
+         (const void *)((uintptr_t)entity + PROBE_GTA_PHYSICAL_MOVE_SPEED_OFFSET),
+         sizeof(snapshot->move_speed));
+  memcpy(snapshot->turn_speed,
+         (const void *)((uintptr_t)entity + PROBE_GTA_PHYSICAL_TURN_SPEED_OFFSET),
+         sizeof(snapshot->turn_speed));
+  snapshot->valid = 1u;
+  return 1;
+}
+
+static void capture_trailer_association(
+    void *remote_player, const probe_trailer_live_snapshot *target,
+    DWORD *towing_wrapper, DWORD *towing_gta, DWORD *live_trailer_gta,
+    BYTE *matches) {
+  DWORD wrapper = 0u;
+  DWORD gta = 0u;
+  DWORD live = 0u;
+
+  if (remote_player != NULL) {
+    wrapper = read_u32_or(
+        (uintptr_t)remote_player + PROBE_SAMP_R5_REMOTE_PLAYER_VEHICLE_WRAPPER_OFFSET,
+        0u);
+  }
+  if (wrapper != 0u) {
+    gta = read_u32_or(
+        (uintptr_t)wrapper + PROBE_SAMP_R5_VEHICLE_WRAPPER_GTA_VEHICLE_OFFSET,
+        0u);
+  }
+  if (gta != 0u) {
+    live = read_u32_or((uintptr_t)gta + PROBE_GTA_VEHICLE_TRAILER_OFFSET, 0u);
+  }
+  if (towing_wrapper != NULL) {
+    *towing_wrapper = wrapper;
+  }
+  if (towing_gta != NULL) {
+    *towing_gta = gta;
+  }
+  if (live_trailer_gta != NULL) {
+    *live_trailer_gta = live;
+  }
+  if (matches != NULL) {
+    *matches =
+        target != NULL && target->valid != 0u && target->gta_vehicle != 0u &&
+                live == target->gta_vehicle
+            ? 1u
+            : 0u;
+  }
+}
+
+static BYTE predict_trailer_sync_mode(
+    const probe_samp_trailer_sync_r5 *sync,
+    const probe_trailer_live_snapshot *before, BYTE association_pre) {
+  float dx;
+  float dy;
+  float dz;
+
+  if (sync == NULL || before == NULL || before->valid == 0u) {
+    return 0u;
+  }
+  if (association_pre == 0u) {
+    return 4u;
+  }
+  dx = sync->position[0] - before->position[0];
+  dy = sync->position[1] - before->position[1];
+  dz = sync->position[2] - before->position[2];
+  if (probe_abs_float(dx) <= 0.5f && probe_abs_float(dy) <= 0.5f &&
+      probe_abs_float(dz) <= 0.5f) {
+    return 1u;
+  }
+  if (probe_abs_float(dx) > 6.0f || probe_abs_float(dy) > 6.0f ||
+      probe_abs_float(dz) > 3.0f) {
+    return 3u;
+  }
+  return 2u;
+}
+
+static void PROBE_THISCALL hook_samp_trailer_sync_apply(
+    void *remote_player, const probe_samp_trailer_sync_r5 *sync) {
+  probe_trailer_sync_trace trace;
+  probe_trailer_sync_trace *slot;
+  LONG seq;
+
+  memset(&trace, 0, sizeof(trace));
+  seq = InterlockedIncrement(&g_trailer_sync_trace_write_seq);
+  trace.call_seq = seq;
+  trace.event_seq = InterlockedIncrement(&g_trailer_trace_event_seq);
+  trace.tick = GetTickCount();
+  trace.remote_player = (DWORD)(uintptr_t)remote_player;
+  if (sync != NULL &&
+      memory_is_readable((uintptr_t)sync, sizeof(trace.sync))) {
+    memcpy(&trace.sync, sync, sizeof(trace.sync));
+    trace.payload_valid = 1u;
+    (void)capture_trailer_live_snapshot(trace.sync.vehicle_id, &trace.before);
+    capture_trailer_association(
+        remote_player, &trace.before, &trace.towing_wrapper_pre,
+        &trace.towing_gta_pre, &trace.live_trailer_gta_pre,
+        &trace.association_pre);
+    trace.predicted_mode = predict_trailer_sync_mode(
+        &trace.sync, &trace.before, trace.association_pre);
+  }
+
+  if (g_orig_samp_trailer_sync_apply != NULL) {
+    ((probe_samp_trailer_sync_apply_fn)g_orig_samp_trailer_sync_apply)(
+        remote_player, sync);
+  }
+
+  if (trace.payload_valid != 0u) {
+    (void)capture_trailer_live_snapshot(trace.sync.vehicle_id, &trace.after);
+    capture_trailer_association(
+        remote_player, &trace.after, &trace.towing_wrapper_post,
+        &trace.towing_gta_post, &trace.live_trailer_gta_post,
+        &trace.association_post);
+  }
+
+  slot = &g_trailer_sync_trace_ring[
+      ((unsigned long)(seq - 1)) % PROBE_TRAILER_SYNC_TRACE_RING];
+  InterlockedExchange(&slot->committed_seq, 0);
+  memcpy((BYTE *)slot + sizeof(slot->committed_seq),
+         (const BYTE *)&trace + sizeof(trace.committed_seq),
+         sizeof(trace) - sizeof(trace.committed_seq));
+  MemoryBarrier();
+  InterlockedExchange(&slot->committed_seq, seq);
+}
+
+static const char *trailer_sync_mode_name(BYTE mode) {
+  switch (mode) {
+    case 1u:
+      return "noop";
+    case 2u:
+      return "correct";
+    case 3u:
+      return "snap";
+    case 4u:
+      return "transition";
+    default:
+      return "unknown";
+  }
+}
+
+static void flush_trailer_sync_trace_ring(void) {
+  LONG write_seq =
+      InterlockedCompareExchange(&g_trailer_sync_trace_write_seq, 0, 0);
+  LONG pending = write_seq - g_trailer_sync_trace_flushed_seq;
+
+  if (pending > (LONG)PROBE_TRAILER_SYNC_TRACE_RING) {
+    LONG skipped = pending - (LONG)PROBE_TRAILER_SYNC_TRACE_RING;
+    g_trailer_sync_trace_flushed_seq += skipped;
+    g_trailer_sync_trace_overflow_count += skipped;
+    probe_log("trailer_sync_r5: overflow skipped=%ld total_skipped=%ld "
+              "write_seq=%ld evidence=PROBE_TRACE",
+              (long)skipped, (long)g_trailer_sync_trace_overflow_count,
+              (long)write_seq);
+  }
+
+  while (g_trailer_sync_trace_flushed_seq < write_seq) {
+    LONG next_seq = g_trailer_sync_trace_flushed_seq + 1;
+    probe_trailer_sync_trace *slot =
+        &g_trailer_sync_trace_ring[
+            ((unsigned long)(next_seq - 1)) % PROBE_TRAILER_SYNC_TRACE_RING];
+    probe_trailer_sync_trace trace;
+    LONG committed = InterlockedCompareExchange(&slot->committed_seq, 0, 0);
+    float pre_delta[3] = {0.0f, 0.0f, 0.0f};
+    float post_delta[3] = {0.0f, 0.0f, 0.0f};
+
+    if (committed != next_seq) {
+      break;
+    }
+    MemoryBarrier();
+    memcpy(&trace, slot, sizeof(trace));
+    MemoryBarrier();
+    if (InterlockedCompareExchange(&slot->committed_seq, 0, 0) != next_seq) {
+      continue;
+    }
+
+    if (trace.payload_valid != 0u && trace.before.valid != 0u) {
+      pre_delta[0] = trace.sync.position[0] - trace.before.position[0];
+      pre_delta[1] = trace.sync.position[1] - trace.before.position[1];
+      pre_delta[2] = trace.sync.position[2] - trace.before.position[2];
+    }
+    if (trace.payload_valid != 0u && trace.after.valid != 0u) {
+      post_delta[0] = trace.sync.position[0] - trace.after.position[0];
+      post_delta[1] = trace.sync.position[1] - trace.after.position[1];
+      post_delta[2] = trace.sync.position[2] - trace.after.position[2];
+    }
+
+    probe_log(
+        "trailer_sync_r5: seq=%ld event=%ld tick=%lu remote=0x%08lx vehicle=%u "
+        "payload=%u mode=%s association=%u->%u "
+        "target=(%.6f,%.6f,%.6f) "
+        "pre_valid=%u pre=(%.6f,%.6f,%.6f) "
+        "pre_delta=(%.6f,%.6f,%.6f) "
+        "post_valid=%u post=(%.6f,%.6f,%.6f) "
+        "post_delta=(%.6f,%.6f,%.6f) "
+        "target_move=(%.6f,%.6f,%.6f) "
+        "pre_move=(%.6f,%.6f,%.6f) post_move=(%.6f,%.6f,%.6f) "
+        "target_turn=(%.6f,%.6f,%.6f) "
+        "pre_turn=(%.6f,%.6f,%.6f) post_turn=(%.6f,%.6f,%.6f) "
+        "pool=0x%08lx listed=0x%08lx wrapper=0x%08lx->0x%08lx "
+        "entity=0x%08lx->0x%08lx matrix=0x%08lx->0x%08lx "
+        "trailer_gta=0x%08lx->0x%08lx "
+        "towing_wrapper=0x%08lx->0x%08lx towing_gta=0x%08lx->0x%08lx "
+        "live_trailer=0x%08lx->0x%08lx "
+        "evidence=STATIC_037,PROBE_TRACE:samp.dll+0x15C90",
+        (long)trace.call_seq, (long)trace.event_seq,
+        (unsigned long)trace.tick,
+        (unsigned long)trace.remote_player, (unsigned)trace.sync.vehicle_id,
+        (unsigned)trace.payload_valid,
+        trailer_sync_mode_name(trace.predicted_mode),
+        (unsigned)trace.association_pre, (unsigned)trace.association_post,
+        (double)trace.sync.position[0], (double)trace.sync.position[1],
+        (double)trace.sync.position[2], (unsigned)trace.before.valid,
+        (double)trace.before.position[0], (double)trace.before.position[1],
+        (double)trace.before.position[2], (double)pre_delta[0],
+        (double)pre_delta[1], (double)pre_delta[2],
+        (unsigned)trace.after.valid, (double)trace.after.position[0],
+        (double)trace.after.position[1], (double)trace.after.position[2],
+        (double)post_delta[0], (double)post_delta[1],
+        (double)post_delta[2], (double)trace.sync.move_speed[0],
+        (double)trace.sync.move_speed[1], (double)trace.sync.move_speed[2],
+        (double)trace.before.move_speed[0],
+        (double)trace.before.move_speed[1],
+        (double)trace.before.move_speed[2],
+        (double)trace.after.move_speed[0],
+        (double)trace.after.move_speed[1],
+        (double)trace.after.move_speed[2],
+        (double)trace.sync.turn_speed[0],
+        (double)trace.sync.turn_speed[1],
+        (double)trace.sync.turn_speed[2],
+        (double)trace.before.turn_speed[0],
+        (double)trace.before.turn_speed[1],
+        (double)trace.before.turn_speed[2],
+        (double)trace.after.turn_speed[0],
+        (double)trace.after.turn_speed[1],
+        (double)trace.after.turn_speed[2],
+        (unsigned long)trace.before.vehicle_pool,
+        (unsigned long)trace.before.listed,
+        (unsigned long)trace.before.wrapper,
+        (unsigned long)trace.after.wrapper,
+        (unsigned long)trace.before.entity,
+        (unsigned long)trace.after.entity,
+        (unsigned long)trace.before.matrix,
+        (unsigned long)trace.after.matrix,
+        (unsigned long)trace.before.gta_vehicle,
+        (unsigned long)trace.after.gta_vehicle,
+        (unsigned long)trace.towing_wrapper_pre,
+        (unsigned long)trace.towing_wrapper_post,
+        (unsigned long)trace.towing_gta_pre,
+        (unsigned long)trace.towing_gta_post,
+        (unsigned long)trace.live_trailer_gta_pre,
+        (unsigned long)trace.live_trailer_gta_post);
+    g_trailer_sync_trace_flushed_seq = next_seq;
+  }
+}
+
+static void capture_trailer_physics_timing(
+    probe_trailer_physics_timing *timing) {
+  DWORD time_step_bits = 0u;
+
+  if (timing == NULL) {
+    return;
+  }
+  memset(timing, 0, sizeof(*timing));
+  timing->tick = GetTickCount();
+  timing->thread_id = GetCurrentThreadId();
+  if (read_u32_checked(PROBE_GTA_US10_FRAME_COUNTER_ADDR,
+                       &timing->gta_frame)) {
+    timing->valid_mask |= PROBE_TRAILER_PHYSICS_TIMING_FRAME_VALID;
+  }
+  if (read_u32_checked(PROBE_GTA_US10_GAME_TIME_ADDR, &timing->game_time)) {
+    timing->valid_mask |= PROBE_TRAILER_PHYSICS_TIMING_GAME_TIME_VALID;
+  }
+  if (read_u32_checked(PROBE_GTA_US10_TIME_STEP_ADDR, &time_step_bits)) {
+    memcpy(&timing->time_step, &time_step_bits, sizeof(time_step_bits));
+    timing->valid_mask |= PROBE_TRAILER_PHYSICS_TIMING_STEP_VALID;
+  }
+}
+
+static void capture_trailer_physics_vehicle(
+    DWORD object, int include_trailer_fields,
+    probe_trailer_physics_vehicle_state *state) {
+  DWORD matrix = 0u;
+  const uintptr_t vehicle = (uintptr_t)object;
+
+  if (state == NULL) {
+    return;
+  }
+  memset(state, 0, sizeof(*state));
+  state->object = object;
+  if (vehicle == 0u ||
+      !memory_is_readable(
+          vehicle, PROBE_GTA_VEHICLE_TRAILER_OFFSET + sizeof(DWORD))) {
+    return;
+  }
+
+  memcpy(&state->vtable, (const void *)vehicle, sizeof(state->vtable));
+  memcpy(&matrix,
+         (const void *)(vehicle + PROBE_GTA_ENTITY_MATRIX_PTR_OFFSET),
+         sizeof(matrix));
+  state->matrix = matrix;
+  memcpy(&state->flags,
+         (const void *)(vehicle + PROBE_GTA_ENTITY_FLAGS_OFFSET),
+         sizeof(state->flags));
+  memcpy(&state->status,
+         (const void *)(vehicle + PROBE_GTA_ENTITY_STATUS_OFFSET),
+         sizeof(state->status));
+  memcpy(&state->move_speed,
+         (const void *)(vehicle + PROBE_GTA_PHYSICAL_MOVE_SPEED_OFFSET),
+         sizeof(state->move_speed));
+  memcpy(&state->turn_speed,
+         (const void *)(vehicle + PROBE_GTA_PHYSICAL_TURN_SPEED_OFFSET),
+         sizeof(state->turn_speed));
+  memcpy(&state->fake_physics,
+         (const void *)(vehicle + PROBE_GTA_PHYSICAL_FAKE_PHYSICS_OFFSET),
+         sizeof(state->fake_physics));
+  memcpy(&state->vehicle_flags,
+         (const void *)(vehicle + PROBE_GTA_VEHICLE_FLAGS_OFFSET),
+         sizeof(state->vehicle_flags));
+  memcpy(&state->driver,
+         (const void *)(vehicle + PROBE_GTA_VEHICLE_DRIVER_OFFSET),
+         sizeof(state->driver));
+  memcpy(state->passengers,
+         (const void *)(vehicle + PROBE_GTA_VEHICLE_DRIVER_OFFSET +
+                        sizeof(state->driver)),
+         sizeof(state->passengers));
+  memcpy(&state->towing_vehicle,
+         (const void *)(vehicle + PROBE_GTA_TRAILER_TOWING_VEHICLE_OFFSET),
+         sizeof(state->towing_vehicle));
+  memcpy(&state->trailer_vehicle,
+         (const void *)(vehicle + PROBE_GTA_VEHICLE_TRAILER_OFFSET),
+         sizeof(state->trailer_vehicle));
+  state->valid_mask |= PROBE_TRAILER_PHYSICS_VEHICLE_COMMON_VALID;
+
+  if (matrix != 0u &&
+      memory_is_readable((uintptr_t)matrix,
+                         PROBE_GTA_MATRIX_POSITION_OFFSET +
+                             sizeof(state->position))) {
+    memcpy(state->right, (const void *)(uintptr_t)matrix,
+           sizeof(state->right));
+    memcpy(state->forward, (const void *)((uintptr_t)matrix + 0x10u),
+           sizeof(state->forward));
+    memcpy(state->up, (const void *)((uintptr_t)matrix + 0x20u),
+           sizeof(state->up));
+    memcpy(state->position,
+           (const void *)((uintptr_t)matrix +
+                          PROBE_GTA_MATRIX_POSITION_OFFSET),
+           sizeof(state->position));
+    state->valid_mask |= PROBE_TRAILER_PHYSICS_VEHICLE_MATRIX_VALID;
+  }
+
+  if (include_trailer_fields &&
+      memory_is_readable(
+          vehicle + PROBE_GTA_AUTOMOBILE_WHEEL_COMPRESSION_OFFSET,
+          PROBE_GTA_AUTOMOBILE_REAR_HEIGHT_OFFSET + sizeof(float) -
+              PROBE_GTA_AUTOMOBILE_WHEEL_COMPRESSION_OFFSET) &&
+      memory_is_readable(
+          vehicle + PROBE_GTA_TRAILER_SUPPORT_RATIO_X_OFFSET,
+          PROBE_GTA_TRAILER_TOW_RATIO_Y_OFFSET + sizeof(float) -
+              PROBE_GTA_TRAILER_SUPPORT_RATIO_X_OFFSET)) {
+    memcpy(state->wheel_compression,
+           (const void *)(vehicle +
+                          PROBE_GTA_AUTOMOBILE_WHEEL_COMPRESSION_OFFSET),
+           sizeof(state->wheel_compression));
+    memcpy(
+        state->wheel_compression_previous,
+        (const void *)(vehicle +
+                       PROBE_GTA_AUTOMOBILE_WHEEL_COMPRESSION_PREV_OFFSET),
+        sizeof(state->wheel_compression_previous));
+    memcpy(state->spring_length,
+           (const void *)(vehicle +
+                          PROBE_GTA_AUTOMOBILE_SPRING_LENGTH_OFFSET),
+           sizeof(state->spring_length));
+    memcpy(state->line_length,
+           (const void *)(vehicle +
+                          PROBE_GTA_AUTOMOBILE_LINE_LENGTH_OFFSET),
+           sizeof(state->line_length));
+    memcpy(&state->ride_height[0],
+           (const void *)(vehicle +
+                          PROBE_GTA_AUTOMOBILE_FRONT_HEIGHT_OFFSET),
+           sizeof(state->ride_height[0]));
+    memcpy(&state->ride_height[1],
+           (const void *)(vehicle +
+                          PROBE_GTA_AUTOMOBILE_REAR_HEIGHT_OFFSET),
+           sizeof(state->ride_height[1]));
+    memcpy(state->support,
+           (const void *)(vehicle +
+                          PROBE_GTA_TRAILER_SUPPORT_RATIO_X_OFFSET),
+           sizeof(state->support));
+    state->valid_mask |= PROBE_TRAILER_PHYSICS_VEHICLE_TRAILER_VALID;
+  }
+}
+
+static void capture_trailer_physics_pair(
+    DWORD trailer, DWORD tractor, probe_trailer_physics_pair_state *state) {
+  if (state == NULL) {
+    return;
+  }
+  memset(state, 0, sizeof(*state));
+  capture_trailer_physics_timing(&state->timing);
+  capture_trailer_physics_vehicle(trailer, 1, &state->trailer);
+  capture_trailer_physics_vehicle(tractor, 0, &state->tractor);
+}
+
+static void publish_trailer_physics_trace(
+    probe_trailer_physics_trace *trace) {
+  probe_trailer_physics_trace *slot;
+  LONG ring_seq;
+
+  if (trace == NULL) {
+    return;
+  }
+  ring_seq = InterlockedIncrement(&g_trailer_physics_trace_write_seq);
+  trace->ring_seq = ring_seq;
+  slot = &g_trailer_physics_trace_ring[
+      ((unsigned long)(ring_seq - 1)) % PROBE_TRAILER_PHYSICS_TRACE_RING];
+  InterlockedExchange(&slot->committed_seq, 0);
+  memcpy((BYTE *)slot + sizeof(slot->committed_seq),
+         (const BYTE *)trace + sizeof(trace->committed_seq),
+         sizeof(*trace) - sizeof(trace->committed_seq));
+  MemoryBarrier();
+  InterlockedExchange(&slot->committed_seq, ring_seq);
+}
+
+static LONG arm_trailer_physics_track(
+    DWORD trailer, DWORD tractor,
+    const probe_trailer_physics_vehicle_state *trailer_after,
+    const probe_trailer_physics_vehicle_state *tractor_after) {
+  LONG generation;
+  probe_trailer_physics_track *track;
+
+  if (trailer == 0u || tractor == 0u || trailer_after == NULL ||
+      tractor_after == NULL ||
+      (trailer_after->valid_mask &
+       PROBE_TRAILER_PHYSICS_VEHICLE_COMMON_VALID) == 0u ||
+      (tractor_after->valid_mask &
+       PROBE_TRAILER_PHYSICS_VEHICLE_COMMON_VALID) == 0u ||
+      trailer_after->vtable != PROBE_GTA_US10_CTRAILER_VTABLE) {
+    return 0;
+  }
+  generation = InterlockedIncrement(&g_trailer_physics_generation);
+  if (generation <= 0) {
+    return 0;
+  }
+  track = &g_trailer_physics_tracks[
+      ((unsigned long)(generation - 1)) % PROBE_TRAILER_PHYSICS_TRACK_SLOTS];
+  InterlockedExchange(&track->generation, 0);
+  track->trailer = trailer;
+  track->tractor = tractor;
+  InterlockedExchange(&track->next_frame, 0);
+  MemoryBarrier();
+  InterlockedExchange(&track->generation, generation);
+  return generation;
+}
+
+static int claim_trailer_physics_frame(
+    DWORD trailer, DWORD *tractor_out, LONG *generation_out,
+    DWORD *frame_index_out) {
+  LONG best_generation = 0;
+  probe_trailer_physics_track *best = NULL;
+  size_t i;
+
+  if (trailer == 0u || tractor_out == NULL || generation_out == NULL ||
+      frame_index_out == NULL) {
+    return 0;
+  }
+  for (i = 0; i < PROBE_TRAILER_PHYSICS_TRACK_SLOTS; ++i) {
+    probe_trailer_physics_track *track = &g_trailer_physics_tracks[i];
+    LONG generation =
+        InterlockedCompareExchange(&track->generation, 0, 0);
+    MemoryBarrier();
+    if (generation > best_generation && track->trailer == trailer) {
+      best_generation = generation;
+      best = track;
+    }
+  }
+  if (best == NULL) {
+    return 0;
+  }
+
+  *frame_index_out =
+      (DWORD)(InterlockedIncrement(&best->next_frame) - 1);
+  MemoryBarrier();
+  if (InterlockedCompareExchange(&best->generation, 0, 0) !=
+          best_generation ||
+      best->trailer != trailer) {
+    return 0;
+  }
+  if (*frame_index_out >= PROBE_TRAILER_PHYSICS_FRAME_LIMIT) {
+    (void)InterlockedCompareExchange(&best->generation, 0, best_generation);
+    return 0;
+  }
+  *tractor_out = best->tractor;
+  *generation_out = best_generation;
+  if (*frame_index_out + 1u == PROBE_TRAILER_PHYSICS_FRAME_LIMIT) {
+    (void)InterlockedCompareExchange(&best->generation, 0, best_generation);
+  }
+  return 1;
+}
+
+static void capture_vehicle_lifecycle_pool_state(
+    DWORD vehicle_pool, WORD vehicle_id, int id_valid,
+    probe_vehicle_lifecycle_pool_state *state) {
+  uintptr_t index;
+
+  if (state == NULL) {
+    return;
+  }
+  memset(state, 0, sizeof(*state));
+  state->pool = vehicle_pool;
+  state->id_valid = id_valid ? 1u : 0u;
+  if (!id_valid || vehicle_pool == 0u ||
+      vehicle_id >= PROBE_SAMP_R5_VEHICLE_POOL_CAPACITY) {
+    return;
+  }
+
+  index = (uintptr_t)vehicle_id * sizeof(DWORD);
+  state->listed = read_u32_or(
+      (uintptr_t)vehicle_pool + PROBE_SAMP_R5_VEHICLE_POOL_LISTED_OFFSET +
+          index,
+      0u);
+  state->wrapper = read_u32_or(
+      (uintptr_t)vehicle_pool + PROBE_SAMP_R5_VEHICLE_POOL_WRAPPER_OFFSET +
+          index,
+      0u);
+  if (state->wrapper == 0u) {
+    return;
+  }
+  state->wrapper_entity = read_u32_or(
+      (uintptr_t)state->wrapper +
+          PROBE_SAMP_R5_VEHICLE_WRAPPER_ENTITY_OFFSET,
+      0u);
+  state->gta_vehicle = read_u32_or(
+      (uintptr_t)state->wrapper +
+          PROBE_SAMP_R5_VEHICLE_WRAPPER_GTA_VEHICLE_OFFSET,
+      0u);
+  capture_trailer_physics_vehicle(state->gta_vehicle, 0, &state->vehicle);
+}
+
+static DWORD resolve_gta_vehicle_ref_readonly(DWORD reference) {
+  DWORD vehicle_pool;
+  DWORD objects;
+  DWORD byte_map;
+  DWORD size;
+  DWORD index;
+  BYTE slot_id;
+  uint64_t object_address;
+
+  /*
+   * GTA_REVERSED_REF + STATIC_037:
+   * This is the read-only equivalent of GTA-SA US 1.0 CPool<CVehicle>::
+   * GetAtRef at gta_sa.exe+0x48E0. The supported binary uses a 0xA18-byte
+   * vehicle slot and compares byte_map[ref >> 8] with the reference low byte.
+   */
+  vehicle_pool = read_u32_or(PROBE_GTA_US10_VEHICLE_POOL_PTR_ADDR, 0u);
+  if (vehicle_pool == 0u ||
+      !memory_is_readable((uintptr_t)vehicle_pool, 12u)) {
+    return 0u;
+  }
+  objects = read_u32_or((uintptr_t)vehicle_pool, 0u);
+  byte_map = read_u32_or((uintptr_t)vehicle_pool + 4u, 0u);
+  size = read_u32_or((uintptr_t)vehicle_pool + 8u, 0u);
+  index = reference >> 8;
+  if (objects == 0u || byte_map == 0u || index >= size ||
+      !memory_is_readable((uintptr_t)byte_map + index, sizeof(slot_id))) {
+    return 0u;
+  }
+  memcpy(&slot_id, (const void *)((uintptr_t)byte_map + index),
+         sizeof(slot_id));
+  if (slot_id != (BYTE)reference) {
+    return 0u;
+  }
+  object_address =
+      (uint64_t)objects +
+      ((uint64_t)index * PROBE_GTA_US10_VEHICLE_POOL_OBJECT_SIZE);
+  if (object_address > UINT32_MAX ||
+      !memory_is_readable((uintptr_t)object_address,
+                          PROBE_GTA_VEHICLE_TRAILER_OFFSET +
+                              sizeof(DWORD))) {
+    return 0u;
+  }
+  return (DWORD)object_address;
+}
+
+static void publish_vehicle_lifecycle_trace(
+    probe_vehicle_lifecycle_trace *trace) {
+  probe_vehicle_lifecycle_trace *slot;
+  LONG ring_seq;
+
+  if (trace == NULL) {
+    return;
+  }
+  ring_seq = InterlockedIncrement(&g_vehicle_lifecycle_trace_write_seq);
+  trace->ring_seq = ring_seq;
+  slot = &g_vehicle_lifecycle_trace_ring[
+      ((unsigned long)(ring_seq - 1)) % PROBE_VEHICLE_LIFECYCLE_TRACE_RING];
+  InterlockedExchange(&slot->committed_seq, 0);
+  memcpy((BYTE *)slot + sizeof(slot->committed_seq),
+         (const BYTE *)trace + sizeof(trace->committed_seq),
+         sizeof(*trace) - sizeof(trace->committed_seq));
+  MemoryBarrier();
+  InterlockedExchange(&slot->committed_seq, ring_seq);
+}
+
+static BYTE classify_vehicle_lifecycle_source(BYTE kind, DWORD caller_rva) {
+  if (kind == PROBE_VEHICLE_LIFECYCLE_EVENT_POOL_NEW) {
+    switch (caller_rva) {
+      case 0x0000e764u:
+      case 0x0000e7ccu:
+      case 0x0000e7ddu:
+      case 0x0000e7eeu:
+        return PROBE_VEHICLE_LIFECYCLE_SOURCE_RPC164;
+      case 0x0001f338u:
+      case 0x0001f353u:
+      case 0x0001f35eu:
+      case 0x0001f369u:
+      case 0x0001f384u:
+      case 0x0001f38fu:
+      case 0x0001f39au:
+        return PROBE_VEHICLE_LIFECYCLE_SOURCE_POOL_RETRY;
+      default:
+        return PROBE_VEHICLE_LIFECYCLE_SOURCE_NONE;
+    }
+  }
+  if (kind == PROBE_VEHICLE_LIFECYCLE_EVENT_PUT_DIRECT) {
+    switch (caller_rva) {
+      case 0x000148eau:
+        return PROBE_VEHICLE_LIFECYCLE_SOURCE_REMOTE_SYNC;
+      case 0x000196dcu:
+        return PROBE_VEHICLE_LIFECYCLE_SOURCE_RPC70;
+      case 0x0009e442u:
+        return PROBE_VEHICLE_LIFECYCLE_SOURCE_INTERNAL;
+      default:
+        return PROBE_VEHICLE_LIFECYCLE_SOURCE_NONE;
+    }
+  }
+  return PROBE_VEHICLE_LIFECYCLE_SOURCE_NONE;
+}
+
+static int PROBE_THISCALL hook_samp_vehicle_pool_new(
+    void *vehicle_pool, const void *vehicle_info) {
+  probe_vehicle_lifecycle_trace trace;
+  int result = 0;
+
+  memset(&trace, 0, sizeof(trace));
+  trace.event_seq = InterlockedIncrement(&g_vehicle_lifecycle_event_seq);
+  trace.tick = GetTickCount();
+  trace.thread_id = GetCurrentThreadId();
+  trace.caller_rva = samp_rva_from_address(probe_return_address());
+  trace.hook_rva = PROBE_SAMP_R5_VEHICLE_POOL_NEW_RVA;
+  trace.kind = PROBE_VEHICLE_LIFECYCLE_EVENT_POOL_NEW;
+  trace.source =
+      classify_vehicle_lifecycle_source(trace.kind, trace.caller_rva);
+  trace.object = (DWORD)(uintptr_t)vehicle_pool;
+  trace.input = (DWORD)(uintptr_t)vehicle_info;
+  trace.vehicle_id = 0xffffu;
+  if (vehicle_info != NULL &&
+      memory_is_readable((uintptr_t)vehicle_info,
+                         sizeof(trace.vehicle_id))) {
+    memcpy(&trace.vehicle_id, vehicle_info, sizeof(trace.vehicle_id));
+    trace.input_valid =
+        trace.vehicle_id < PROBE_SAMP_R5_VEHICLE_POOL_CAPACITY ? 1u : 0u;
+  }
+  capture_vehicle_lifecycle_pool_state(
+      trace.object, trace.vehicle_id, trace.input_valid, &trace.before);
+  if (g_orig_samp_vehicle_pool_new != NULL) {
+    result = ((probe_samp_vehicle_pool_new_fn)g_orig_samp_vehicle_pool_new)(
+        vehicle_pool, vehicle_info);
+  }
+  trace.result = result != 0 ? 1u : 0u;
+  capture_vehicle_lifecycle_pool_state(
+      trace.object, trace.vehicle_id, trace.input_valid, &trace.after);
+  publish_vehicle_lifecycle_trace(&trace);
+  return result;
+}
+
+static void PROBE_THISCALL hook_samp_player_ped_put_direct(
+    void *player_ped, DWORD gta_vehicle_ref, DWORD seat) {
+  probe_vehicle_lifecycle_trace trace;
+  DWORD gta_vehicle;
+
+  memset(&trace, 0, sizeof(trace));
+  trace.event_seq = InterlockedIncrement(&g_vehicle_lifecycle_event_seq);
+  trace.tick = GetTickCount();
+  trace.thread_id = GetCurrentThreadId();
+  trace.caller_rva = samp_rva_from_address(probe_return_address());
+  trace.hook_rva =
+      PROBE_SAMP_R5_PLAYER_PED_PUT_DIRECTLY_IN_VEHICLE_RVA;
+  trace.kind = PROBE_VEHICLE_LIFECYCLE_EVENT_PUT_DIRECT;
+  trace.source =
+      classify_vehicle_lifecycle_source(trace.kind, trace.caller_rva);
+  trace.object = (DWORD)(uintptr_t)player_ped;
+  trace.gta_vehicle_ref = gta_vehicle_ref;
+  trace.seat = seat;
+  trace.vehicle_id = 0xffffu;
+  trace.gta_ped = player_ped != NULL
+                      ? read_u32_or(
+                            (uintptr_t)player_ped +
+                                PROBE_SAMP_R5_PLAYER_PED_GTA_PED_OFFSET,
+                            0u)
+                      : 0u;
+  if (trace.gta_ped != 0u) {
+    trace.ped_vehicle_pre = read_u32_or(
+        (uintptr_t)trace.gta_ped + PROBE_GTA_PED_VEHICLE_OFFSET, 0u);
+  }
+  gta_vehicle = resolve_gta_vehicle_ref_readonly(gta_vehicle_ref);
+  trace.before.gta_vehicle = gta_vehicle;
+  capture_trailer_physics_vehicle(
+      gta_vehicle, 0, &trace.before.vehicle);
+  if (g_orig_samp_player_ped_put_direct != NULL) {
+    ((probe_samp_player_ped_put_direct_fn)
+         g_orig_samp_player_ped_put_direct)(
+        player_ped, gta_vehicle_ref, seat);
+  }
+  trace.result = 1u;
+  if (trace.gta_ped != 0u) {
+    trace.ped_vehicle_post = read_u32_or(
+        (uintptr_t)trace.gta_ped + PROBE_GTA_PED_VEHICLE_OFFSET, 0u);
+  }
+  gta_vehicle = resolve_gta_vehicle_ref_readonly(gta_vehicle_ref);
+  trace.after.gta_vehicle = gta_vehicle;
+  capture_trailer_physics_vehicle(
+      gta_vehicle, 0, &trace.after.vehicle);
+  publish_vehicle_lifecycle_trace(&trace);
+}
+
+static BYTE PROBE_THISCALL hook_gta_trailer_set_tow_link(
+    void *trailer, void *tractor, DWORD set_my_pos_raw) {
+  probe_trailer_physics_trace trace;
+  BYTE result = 0u;
+
+  memset(&trace, 0, sizeof(trace));
+  trace.event_seq = InterlockedIncrement(&g_trailer_trace_event_seq);
+  trace.kind = PROBE_TRAILER_PHYSICS_EVENT_SET_TOW_LINK;
+  trace.frame_index = 0xffffffffu;
+  trace.trailer = (DWORD)(uintptr_t)trailer;
+  trace.tractor = (DWORD)(uintptr_t)tractor;
+  trace.set_my_pos_raw = set_my_pos_raw;
+  capture_trailer_physics_pair(trace.trailer, trace.tractor, &trace.before);
+
+  if (g_orig_gta_trailer_set_tow_link != NULL) {
+    result = ((probe_gta_trailer_set_tow_link_fn)
+                  g_orig_gta_trailer_set_tow_link)(
+        trailer, tractor, set_my_pos_raw);
+  }
+  trace.result = result;
+  capture_trailer_physics_pair(trace.trailer, trace.tractor, &trace.after);
+  if (result != 0u) {
+    trace.generation = arm_trailer_physics_track(
+        trace.trailer, trace.tractor, &trace.after.trailer,
+        &trace.after.tractor);
+  }
+  publish_trailer_physics_trace(&trace);
+  return result;
+}
+
+static void PROBE_THISCALL hook_gta_trailer_process_control(void *trailer) {
+  probe_trailer_physics_trace trace;
+  DWORD tractor = 0u;
+  DWORD frame_index = 0u;
+  LONG generation = 0;
+
+  if (!claim_trailer_physics_frame((DWORD)(uintptr_t)trailer, &tractor,
+                                   &generation, &frame_index)) {
+    if (g_orig_gta_trailer_process_control != NULL) {
+      ((probe_gta_trailer_process_control_fn)
+           g_orig_gta_trailer_process_control)(trailer);
+    }
+    return;
+  }
+
+  memset(&trace, 0, sizeof(trace));
+  trace.event_seq = InterlockedIncrement(&g_trailer_trace_event_seq);
+  trace.kind = PROBE_TRAILER_PHYSICS_EVENT_PROCESS_CONTROL;
+  trace.generation = generation;
+  trace.frame_index = frame_index;
+  trace.trailer = (DWORD)(uintptr_t)trailer;
+  trace.tractor = tractor;
+  capture_trailer_physics_pair(trace.trailer, trace.tractor, &trace.before);
+  if (g_orig_gta_trailer_process_control != NULL) {
+    ((probe_gta_trailer_process_control_fn)
+         g_orig_gta_trailer_process_control)(trailer);
+  }
+  capture_trailer_physics_pair(trace.trailer, trace.tractor, &trace.after);
+  publish_trailer_physics_trace(&trace);
+}
+
+static const char *trailer_physics_event_name(BYTE kind) {
+  switch (kind) {
+    case PROBE_TRAILER_PHYSICS_EVENT_SET_TOW_LINK:
+      return "set_tow_link";
+    case PROBE_TRAILER_PHYSICS_EVENT_PROCESS_CONTROL:
+      return "process_control";
+    default:
+      return "unknown";
+  }
+}
+
+static const char *vehicle_lifecycle_source_name(BYTE source) {
+  switch (source) {
+    case PROBE_VEHICLE_LIFECYCLE_SOURCE_RPC164:
+      return "rpc164";
+    case PROBE_VEHICLE_LIFECYCLE_SOURCE_POOL_RETRY:
+      return "pool_retry";
+    case PROBE_VEHICLE_LIFECYCLE_SOURCE_REMOTE_SYNC:
+      return "remote_sync";
+    case PROBE_VEHICLE_LIFECYCLE_SOURCE_RPC70:
+      return "rpc70";
+    case PROBE_VEHICLE_LIFECYCLE_SOURCE_INTERNAL:
+      return "internal";
+    default:
+      return "none";
+  }
+}
+
+static void log_trailer_physics_state(
+    const probe_trailer_physics_trace *trace, const char *phase,
+    const probe_trailer_physics_pair_state *state) {
+  const probe_trailer_physics_vehicle_state *t;
+  const probe_trailer_physics_vehicle_state *r;
+
+  if (trace == NULL || phase == NULL || state == NULL) {
+    return;
+  }
+  t = &state->trailer;
+  r = &state->tractor;
+  probe_log(
+      "trailer_physics_state: seq=%ld event=%ld generation=%ld frame=%lu "
+      "phase=%s "
+      "trailer=0x%08lx valid=0x%02x vtable=0x%08lx matrix=0x%08lx "
+      "basis_r=(%.6f,%.6f,%.6f) basis_f=(%.6f,%.6f,%.6f) "
+      "basis_u=(%.6f,%.6f,%.6f) pos=(%.6f,%.6f,%.6f) "
+      "move=(%.6f,%.6f,%.6f) turn=(%.6f,%.6f,%.6f) "
+      "flags=0x%08lx status=0x%02x fake=0x%02x "
+      "vehicle_flags=0x%08lx driver=0x%08lx "
+      "tow=0x%08lx reverse=0x%08lx "
+      "tractor=0x%08lx valid=0x%02x vtable=0x%08lx matrix=0x%08lx "
+      "basis_r=(%.6f,%.6f,%.6f) basis_f=(%.6f,%.6f,%.6f) "
+      "basis_u=(%.6f,%.6f,%.6f) pos=(%.6f,%.6f,%.6f) "
+      "move=(%.6f,%.6f,%.6f) turn=(%.6f,%.6f,%.6f) "
+      "flags=0x%08lx status=0x%02x fake=0x%02x "
+      "vehicle_flags=0x%08lx driver=0x%08lx "
+      "tow=0x%08lx reverse=0x%08lx",
+      (long)trace->ring_seq, (long)trace->event_seq,
+      (long)trace->generation, (unsigned long)trace->frame_index, phase,
+      (unsigned long)t->object, (unsigned)t->valid_mask,
+      (unsigned long)t->vtable, (unsigned long)t->matrix,
+      (double)t->right[0], (double)t->right[1], (double)t->right[2],
+      (double)t->forward[0], (double)t->forward[1],
+      (double)t->forward[2], (double)t->up[0], (double)t->up[1],
+      (double)t->up[2], (double)t->position[0], (double)t->position[1],
+      (double)t->position[2], (double)t->move_speed[0],
+      (double)t->move_speed[1], (double)t->move_speed[2],
+      (double)t->turn_speed[0], (double)t->turn_speed[1],
+      (double)t->turn_speed[2], (unsigned long)t->flags,
+      (unsigned)t->status, (unsigned)t->fake_physics,
+      (unsigned long)t->vehicle_flags, (unsigned long)t->driver,
+      (unsigned long)t->towing_vehicle, (unsigned long)t->trailer_vehicle,
+      (unsigned long)r->object, (unsigned)r->valid_mask,
+      (unsigned long)r->vtable, (unsigned long)r->matrix,
+      (double)r->right[0], (double)r->right[1], (double)r->right[2],
+      (double)r->forward[0], (double)r->forward[1],
+      (double)r->forward[2], (double)r->up[0], (double)r->up[1],
+      (double)r->up[2], (double)r->position[0], (double)r->position[1],
+      (double)r->position[2], (double)r->move_speed[0],
+      (double)r->move_speed[1], (double)r->move_speed[2],
+      (double)r->turn_speed[0], (double)r->turn_speed[1],
+      (double)r->turn_speed[2], (unsigned long)r->flags,
+      (unsigned)r->status, (unsigned)r->fake_physics,
+      (unsigned long)r->vehicle_flags, (unsigned long)r->driver,
+      (unsigned long)r->towing_vehicle, (unsigned long)r->trailer_vehicle);
+  probe_log(
+      "trailer_physics_detail: seq=%ld event=%ld generation=%ld frame=%lu "
+      "phase=%s trailer_valid=0x%02x "
+      "support=(%.6f,%.6f,%.6f,%.6f,%.6f) "
+      "wheel=(%.6f,%.6f,%.6f,%.6f) "
+      "wheel_prev=(%.6f,%.6f,%.6f,%.6f) "
+      "spring=(%.6f,%.6f,%.6f,%.6f) "
+      "line=(%.6f,%.6f,%.6f,%.6f) ride=(%.6f,%.6f) "
+      "evidence=GTA_REVERSED_REF,STATIC_037,PROBE_TRACE,TODO_VERIFY",
+      (long)trace->ring_seq, (long)trace->event_seq,
+      (long)trace->generation, (unsigned long)trace->frame_index, phase,
+      (unsigned)t->valid_mask, (double)t->support[0],
+      (double)t->support[1], (double)t->support[2],
+      (double)t->support[3], (double)t->support[4],
+      (double)t->wheel_compression[0],
+      (double)t->wheel_compression[1],
+      (double)t->wheel_compression[2],
+      (double)t->wheel_compression[3],
+      (double)t->wheel_compression_previous[0],
+      (double)t->wheel_compression_previous[1],
+      (double)t->wheel_compression_previous[2],
+      (double)t->wheel_compression_previous[3],
+      (double)t->spring_length[0], (double)t->spring_length[1],
+      (double)t->spring_length[2], (double)t->spring_length[3],
+      (double)t->line_length[0], (double)t->line_length[1],
+      (double)t->line_length[2], (double)t->line_length[3],
+      (double)t->ride_height[0], (double)t->ride_height[1]);
+}
+
+static void flush_trailer_physics_trace_ring(void) {
+  LONG write_seq = InterlockedCompareExchange(
+      &g_trailer_physics_trace_write_seq, 0, 0);
+  LONG pending = write_seq - g_trailer_physics_trace_flushed_seq;
+
+  if (pending > (LONG)PROBE_TRAILER_PHYSICS_TRACE_RING) {
+    LONG skipped = pending - (LONG)PROBE_TRAILER_PHYSICS_TRACE_RING;
+    g_trailer_physics_trace_flushed_seq += skipped;
+    g_trailer_physics_trace_overflow_count += skipped;
+    probe_log(
+        "trailer_physics: overflow skipped=%ld total_skipped=%ld "
+        "write_seq=%ld evidence=PROBE_TRACE",
+        (long)skipped, (long)g_trailer_physics_trace_overflow_count,
+        (long)write_seq);
+  }
+
+  while (g_trailer_physics_trace_flushed_seq < write_seq) {
+    LONG next_seq = g_trailer_physics_trace_flushed_seq + 1;
+    probe_trailer_physics_trace *slot =
+        &g_trailer_physics_trace_ring[
+            ((unsigned long)(next_seq - 1)) %
+            PROBE_TRAILER_PHYSICS_TRACE_RING];
+    probe_trailer_physics_trace trace;
+    LONG committed = InterlockedCompareExchange(&slot->committed_seq, 0, 0);
+    float trailer_delta[3];
+    float tractor_delta[3];
+
+    if (committed != next_seq) {
+      break;
+    }
+    MemoryBarrier();
+    memcpy(&trace, slot, sizeof(trace));
+    MemoryBarrier();
+    if (InterlockedCompareExchange(&slot->committed_seq, 0, 0) != next_seq) {
+      continue;
+    }
+    trailer_delta[0] =
+        trace.after.trailer.position[0] - trace.before.trailer.position[0];
+    trailer_delta[1] =
+        trace.after.trailer.position[1] - trace.before.trailer.position[1];
+    trailer_delta[2] =
+        trace.after.trailer.position[2] - trace.before.trailer.position[2];
+    tractor_delta[0] =
+        trace.after.tractor.position[0] - trace.before.tractor.position[0];
+    tractor_delta[1] =
+        trace.after.tractor.position[1] - trace.before.tractor.position[1];
+    tractor_delta[2] =
+        trace.after.tractor.position[2] - trace.before.tractor.position[2];
+
+    probe_log(
+        "trailer_physics: seq=%ld event=%ld kind=%s generation=%ld "
+        "frame=%lu trailer=0x%08lx tractor=0x%08lx "
+        "set_my_pos_raw=0x%08lx result=%u "
+        "pre_tick=%lu pre_thread=%lu pre_valid=0x%02x pre_gta_frame=%lu "
+        "pre_game_ms=%lu pre_timestep=%.6f "
+        "post_tick=%lu post_thread=%lu post_valid=0x%02x "
+        "post_gta_frame=%lu post_game_ms=%lu post_timestep=%.6f "
+        "trailer_dpos=(%.6f,%.6f,%.6f) "
+        "tractor_dpos=(%.6f,%.6f,%.6f) "
+        "static_attach_path=rpc148:samp.dll+0x1AE50/opcode0893:"
+        "gta_sa.exe+0x720BB "
+        "evidence=GTA_REVERSED_REF,STATIC_037,PROBE_TRACE,TODO_VERIFY",
+        (long)trace.ring_seq, (long)trace.event_seq,
+        trailer_physics_event_name(trace.kind), (long)trace.generation,
+        (unsigned long)trace.frame_index, (unsigned long)trace.trailer,
+        (unsigned long)trace.tractor, (unsigned long)trace.set_my_pos_raw,
+        (unsigned)trace.result, (unsigned long)trace.before.timing.tick,
+        (unsigned long)trace.before.timing.thread_id,
+        (unsigned)trace.before.timing.valid_mask,
+        (unsigned long)trace.before.timing.gta_frame,
+        (unsigned long)trace.before.timing.game_time,
+        (double)trace.before.timing.time_step,
+        (unsigned long)trace.after.timing.tick,
+        (unsigned long)trace.after.timing.thread_id,
+        (unsigned)trace.after.timing.valid_mask,
+        (unsigned long)trace.after.timing.gta_frame,
+        (unsigned long)trace.after.timing.game_time,
+        (double)trace.after.timing.time_step, (double)trailer_delta[0],
+        (double)trailer_delta[1], (double)trailer_delta[2],
+        (double)tractor_delta[0], (double)tractor_delta[1],
+        (double)tractor_delta[2]);
+    log_trailer_physics_state(&trace, "pre", &trace.before);
+    log_trailer_physics_state(&trace, "post", &trace.after);
+    g_trailer_physics_trace_flushed_seq = next_seq;
+  }
+}
+
+static const char *vehicle_lifecycle_event_name(BYTE kind) {
+  switch (kind) {
+    case PROBE_VEHICLE_LIFECYCLE_EVENT_POOL_NEW:
+      return "vehicle_pool_new";
+    case PROBE_VEHICLE_LIFECYCLE_EVENT_PUT_DIRECT:
+      return "put_directly_in_vehicle";
+    default:
+      return "unknown";
+  }
+}
+
+static void log_vehicle_lifecycle_state(
+    const probe_vehicle_lifecycle_trace *trace, const char *phase,
+    const probe_vehicle_lifecycle_pool_state *state) {
+  const probe_trailer_physics_vehicle_state *vehicle;
+
+  if (trace == NULL || phase == NULL || state == NULL) {
+    return;
+  }
+  vehicle = &state->vehicle;
+  probe_log(
+      "vehicle_lifecycle_state_r5: seq=%ld event=%ld phase=%s "
+      "pool=0x%08lx id_valid=%u listed=0x%08lx wrapper=0x%08lx "
+      "wrapper_entity=0x%08lx gta_vehicle=0x%08lx "
+      "valid=0x%02x object=0x%08lx vtable=0x%08lx matrix=0x%08lx "
+      "entity_flags_1c=0x%08lx status_36=0x%02x fake_b8=0x%02x "
+      "vehicle_flags_428=0x%08lx driver_460=0x%08lx "
+      "passengers_464_480="
+      "0x%08lx,0x%08lx,0x%08lx,0x%08lx,"
+      "0x%08lx,0x%08lx,0x%08lx,0x%08lx "
+      "tow_4c4=0x%08lx trailer_4c8=0x%08lx "
+      "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
+      (long)trace->ring_seq, (long)trace->event_seq, phase,
+      (unsigned long)state->pool, (unsigned)state->id_valid,
+      (unsigned long)state->listed, (unsigned long)state->wrapper,
+      (unsigned long)state->wrapper_entity,
+      (unsigned long)state->gta_vehicle, (unsigned)vehicle->valid_mask,
+      (unsigned long)vehicle->object, (unsigned long)vehicle->vtable,
+      (unsigned long)vehicle->matrix, (unsigned long)vehicle->flags,
+      (unsigned)vehicle->status, (unsigned)vehicle->fake_physics,
+      (unsigned long)vehicle->vehicle_flags,
+      (unsigned long)vehicle->driver,
+      (unsigned long)vehicle->passengers[0],
+      (unsigned long)vehicle->passengers[1],
+      (unsigned long)vehicle->passengers[2],
+      (unsigned long)vehicle->passengers[3],
+      (unsigned long)vehicle->passengers[4],
+      (unsigned long)vehicle->passengers[5],
+      (unsigned long)vehicle->passengers[6],
+      (unsigned long)vehicle->passengers[7],
+      (unsigned long)vehicle->towing_vehicle,
+      (unsigned long)vehicle->trailer_vehicle);
+}
+
+static void flush_vehicle_lifecycle_trace_ring(void) {
+  LONG write_seq = InterlockedCompareExchange(
+      &g_vehicle_lifecycle_trace_write_seq, 0, 0);
+  LONG pending = write_seq - g_vehicle_lifecycle_trace_flushed_seq;
+
+  if (pending > (LONG)PROBE_VEHICLE_LIFECYCLE_TRACE_RING) {
+    LONG skipped =
+        pending - (LONG)PROBE_VEHICLE_LIFECYCLE_TRACE_RING;
+    g_vehicle_lifecycle_trace_flushed_seq += skipped;
+    g_vehicle_lifecycle_trace_overflow_count += skipped;
+    probe_log(
+        "vehicle_lifecycle_r5: overflow skipped=%ld total_skipped=%ld "
+        "write_seq=%ld evidence=PROBE_TRACE",
+        (long)skipped, (long)g_vehicle_lifecycle_trace_overflow_count,
+        (long)write_seq);
+  }
+
+  while (g_vehicle_lifecycle_trace_flushed_seq < write_seq) {
+    LONG next_seq = g_vehicle_lifecycle_trace_flushed_seq + 1;
+    probe_vehicle_lifecycle_trace *slot =
+        &g_vehicle_lifecycle_trace_ring[
+            ((unsigned long)(next_seq - 1)) %
+            PROBE_VEHICLE_LIFECYCLE_TRACE_RING];
+    probe_vehicle_lifecycle_trace trace;
+    LONG committed =
+        InterlockedCompareExchange(&slot->committed_seq, 0, 0);
+    DWORD seat_occupant_pre = 0u;
+    DWORD seat_occupant_post = 0u;
+
+    if (committed != next_seq) {
+      break;
+    }
+    MemoryBarrier();
+    memcpy(&trace, slot, sizeof(trace));
+    MemoryBarrier();
+    if (InterlockedCompareExchange(&slot->committed_seq, 0, 0) !=
+        next_seq) {
+      continue;
+    }
+    if (trace.kind == PROBE_VEHICLE_LIFECYCLE_EVENT_PUT_DIRECT) {
+      if (trace.seat == 0u) {
+        seat_occupant_pre = trace.before.vehicle.driver;
+        seat_occupant_post = trace.after.vehicle.driver;
+      } else if (trace.seat <= 8u) {
+        seat_occupant_pre =
+            trace.before.vehicle.passengers[trace.seat - 1u];
+        seat_occupant_post =
+            trace.after.vehicle.passengers[trace.seat - 1u];
+      }
+    }
+
+    probe_log(
+        "vehicle_lifecycle_r5: seq=%ld event=%ld tick=%lu thread=%lu "
+        "kind=%s source=%s caller_rva=0x%08lx hook_rva=0x%08lx "
+        "object=0x%08lx input=0x%08lx input_valid=%u vehicle_id=%u "
+        "gta_ref=0x%08lx seat=%lu original_result_or_called=%u "
+        "gta_ped=0x%08lx ped_vehicle=0x%08lx->0x%08lx "
+        "seat_occupant=0x%08lx->0x%08lx occupant_matches_ped=%u "
+        "static_callers="
+        "pool_rpc164:+0xE764;pool_retry:+0x1F338;"
+        "remote_sync:+0x148EA;rpc70:+0x196DC;internal:+0x9E442 "
+        "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
+        (long)trace.ring_seq, (long)trace.event_seq,
+        (unsigned long)trace.tick, (unsigned long)trace.thread_id,
+        vehicle_lifecycle_event_name(trace.kind),
+        vehicle_lifecycle_source_name(trace.source),
+        (unsigned long)trace.caller_rva, (unsigned long)trace.hook_rva,
+        (unsigned long)trace.object, (unsigned long)trace.input,
+        (unsigned)trace.input_valid, (unsigned)trace.vehicle_id,
+        (unsigned long)trace.gta_vehicle_ref,
+        (unsigned long)trace.seat, (unsigned)trace.result,
+        (unsigned long)trace.gta_ped,
+        (unsigned long)trace.ped_vehicle_pre,
+        (unsigned long)trace.ped_vehicle_post,
+        (unsigned long)seat_occupant_pre,
+        (unsigned long)seat_occupant_post,
+        trace.gta_ped != 0u && seat_occupant_post == trace.gta_ped);
+    log_vehicle_lifecycle_state(&trace, "pre", &trace.before);
+    log_vehicle_lifecycle_state(&trace, "post", &trace.after);
+    g_vehicle_lifecycle_trace_flushed_seq = next_seq;
+  }
+}
+
+static DWORD resolve_gta_ped_for_player_index_readonly(DWORD player_index) {
+  uintptr_t slot;
+
+  if (g_samp_base == 0u ||
+      player_index >= PROBE_SAMP_R5_PLAYER_PED_TABLE_CAPACITY) {
+    return 0u;
+  }
+  slot = g_samp_base + PROBE_SAMP_R5_PLAYER_PED_TABLE_RVA +
+         ((uintptr_t)player_index * sizeof(DWORD));
+  return read_u32_or(slot, 0u);
+}
+
+static void capture_combat_shot_input(
+    const void *input, probe_combat_shot_state *shot) {
+  uintptr_t address = (uintptr_t)input;
+
+  if (shot == NULL) {
+    return;
+  }
+  memset(shot, 0, sizeof(*shot));
+  /*
+   * STATIC_037:
+   * samp.dll+0xAF280 consumes a 0x2C-byte internal shot context: DWORD
+   * header, three vectors at +0x04/+0x10/+0x1C, and resolved target entity at
+   * +0x28. Semantic meaning of header subfields remains TODO_VERIFY.
+   */
+  if (address == 0u || !memory_is_readable(address, 0x2cu)) {
+    return;
+  }
+  memcpy(&shot->header, (const void *)address, sizeof(shot->header));
+  memcpy(shot->origin, (const void *)(address + 0x04u),
+         sizeof(shot->origin));
+  memcpy(shot->hit, (const void *)(address + 0x10u),
+         sizeof(shot->hit));
+  memcpy(shot->offset, (const void *)(address + 0x1cu),
+         sizeof(shot->offset));
+  memcpy(&shot->target, (const void *)(address + 0x28u),
+         sizeof(shot->target));
+  shot->active = 1u;
+  shot->valid = 1u;
+}
+
+static void capture_combat_ped_state(
+    DWORD player_ped, DWORD gta_ped_override, DWORD player_index,
+    int player_index_valid, probe_combat_ped_state *state) {
+  uintptr_t wrapper = (uintptr_t)player_ped;
+  uintptr_t ped;
+  uintptr_t aim_context;
+  uintptr_t aim_source;
+  uintptr_t intelligence;
+  uintptr_t matrix;
+  uintptr_t weapon;
+  BYTE slot = 0xffu;
+
+  if (state == NULL) {
+    return;
+  }
+  memset(state, 0, sizeof(*state));
+  state->weapon_slot = 0xffu;
+  state->player_ped = player_ped;
+
+  if (wrapper != 0u &&
+      memory_is_readable(
+          wrapper, PROBE_SAMP_R5_PLAYER_PED_SHOT_ACTIVE_OFFSET +
+                       sizeof(DWORD))) {
+    state->valid_mask |= PROBE_COMBAT_STATE_PLAYER_PED_VALID;
+    if (gta_ped_override == 0u) {
+      gta_ped_override = read_u32_or(
+          wrapper + PROBE_SAMP_R5_PLAYER_PED_GTA_PED_OFFSET, 0u);
+    }
+    if (!player_index_valid) {
+      memcpy(&state->player_index,
+             (const void *)(wrapper +
+                            PROBE_SAMP_R5_PLAYER_PED_INDEX_OFFSET),
+             sizeof(state->player_index));
+      player_index = state->player_index;
+      player_index_valid =
+          player_index < PROBE_SAMP_R5_PLAYER_PED_TABLE_CAPACITY;
+    }
+    memcpy(&state->stored_shot.header,
+           (const void *)(wrapper +
+                          PROBE_SAMP_R5_PLAYER_PED_SHOT_CONTEXT_OFFSET),
+           sizeof(state->stored_shot.header));
+    memcpy(state->stored_shot.origin,
+           (const void *)(wrapper +
+                          PROBE_SAMP_R5_PLAYER_PED_SHOT_ORIGIN_OFFSET),
+           sizeof(state->stored_shot.origin));
+    memcpy(state->stored_shot.hit,
+           (const void *)(wrapper +
+                          PROBE_SAMP_R5_PLAYER_PED_SHOT_HIT_OFFSET),
+           sizeof(state->stored_shot.hit));
+    memcpy(state->stored_shot.offset,
+           (const void *)(wrapper +
+                          PROBE_SAMP_R5_PLAYER_PED_SHOT_OFFSET_OFFSET),
+           sizeof(state->stored_shot.offset));
+    memcpy(&state->stored_shot.target,
+           (const void *)(wrapper +
+                          PROBE_SAMP_R5_PLAYER_PED_SHOT_TARGET_OFFSET),
+           sizeof(state->stored_shot.target));
+    memcpy(&state->stored_shot.active,
+           (const void *)(wrapper +
+                          PROBE_SAMP_R5_PLAYER_PED_SHOT_ACTIVE_OFFSET),
+           sizeof(state->stored_shot.active));
+    state->stored_shot.valid = 1u;
+    state->valid_mask |= PROBE_COMBAT_STATE_SHOT_VALID;
+  }
+  if (player_index_valid) {
+    state->player_index = (BYTE)player_index;
+  }
+
+  if (g_samp_base != 0u) {
+    state->aim_context = read_u32_or(
+        g_samp_base + PROBE_SAMP_R5_AIM_CONTEXT_PTR_RVA, 0u);
+    aim_context = (uintptr_t)state->aim_context;
+    if (aim_context != 0u &&
+        memory_is_readable(
+            aim_context, PROBE_SAMP_R5_AIM_CONTEXT_BYTES)) {
+      memcpy(state->aim_words, (const void *)aim_context,
+             sizeof(state->aim_words));
+      state->valid_mask |= PROBE_COMBAT_STATE_AIM_VALID;
+    }
+    if (player_index_valid &&
+        player_index < PROBE_SAMP_R5_PLAYER_PED_TABLE_CAPACITY) {
+      aim_source =
+          g_samp_base + PROBE_SAMP_R5_AIM_CONTEXT_ARRAY_RVA +
+          ((uintptr_t)player_index * PROBE_SAMP_R5_AIM_CONTEXT_BYTES);
+      state->aim_source = (DWORD)aim_source;
+      if (memory_is_readable(
+              aim_source, PROBE_SAMP_R5_AIM_CONTEXT_BYTES)) {
+        memcpy(state->aim_source_words, (const void *)aim_source,
+               sizeof(state->aim_source_words));
+        state->valid_mask |= PROBE_COMBAT_STATE_AIM_SOURCE_VALID;
+      }
+    }
+  }
+
+  state->gta_ped = gta_ped_override;
+  ped = (uintptr_t)state->gta_ped;
+  if (ped == 0u ||
+      !memory_is_readable(
+          ped, PROBE_GTA_PED_CURRENT_WEAPON_SLOT_OFFSET + sizeof(BYTE))) {
+    return;
+  }
+  state->valid_mask |= PROBE_COMBAT_STATE_GTA_PED_VALID;
+  memcpy(&state->ped_vtable, (const void *)ped,
+         sizeof(state->ped_vtable));
+  memcpy(&state->matrix,
+         (const void *)(ped + PROBE_GTA_ENTITY_MATRIX_PTR_OFFSET),
+         sizeof(state->matrix));
+  memcpy(&state->ped_flags,
+         (const void *)(ped + PROBE_GTA_PED_FLAGS_OFFSET),
+         sizeof(state->ped_flags));
+  memcpy(&state->ped_state,
+         (const void *)(ped + PROBE_GTA_PED_STATE_598_OFFSET),
+         sizeof(state->ped_state));
+  memcpy(&state->intelligence,
+         (const void *)(ped + PROBE_GTA_PED_INTELLIGENCE_OFFSET),
+         sizeof(state->intelligence));
+  memcpy(&state->aiming_rotation,
+         (const void *)(ped + PROBE_GTA_PED_AIMING_ROTATION_OFFSET),
+         sizeof(state->aiming_rotation));
+  memcpy(&slot,
+         (const void *)(ped + PROBE_GTA_PED_CURRENT_WEAPON_SLOT_OFFSET),
+         sizeof(slot));
+  state->weapon_slot = slot;
+
+  matrix = (uintptr_t)state->matrix;
+  if (matrix != 0u &&
+      memory_is_readable(
+          matrix, PROBE_GTA_MATRIX_POSITION_OFFSET +
+                      sizeof(state->matrix_position))) {
+    memcpy(state->matrix_right, (const void *)matrix,
+           sizeof(state->matrix_right));
+    memcpy(state->matrix_forward, (const void *)(matrix + 0x10u),
+           sizeof(state->matrix_forward));
+    memcpy(state->matrix_up, (const void *)(matrix + 0x20u),
+           sizeof(state->matrix_up));
+    memcpy(state->matrix_position,
+           (const void *)(matrix + PROBE_GTA_MATRIX_POSITION_OFFSET),
+           sizeof(state->matrix_position));
+    state->valid_mask |= PROBE_COMBAT_STATE_MATRIX_VALID;
+  }
+
+  intelligence = (uintptr_t)state->intelligence;
+  if (intelligence != 0u &&
+      memory_is_readable(
+          intelligence + PROBE_GTA_PED_TASK_ROOTS_OFFSET,
+          sizeof(state->task_roots))) {
+    memcpy(state->task_roots,
+           (const void *)(intelligence +
+                          PROBE_GTA_PED_TASK_ROOTS_OFFSET),
+           sizeof(state->task_roots));
+    state->jetpack_task = read_u32_or(
+        intelligence + PROBE_GTA_PED_JETPACK_TASK_OFFSET, 0u);
+    if (state->jetpack_task != 0u) {
+      state->jetpack_task_vtable =
+          read_u32_or((uintptr_t)state->jetpack_task, 0u);
+    }
+    state->valid_mask |= PROBE_COMBAT_STATE_TASKS_VALID;
+  }
+
+  if (slot >= 13u) {
+    return;
+  }
+  weapon = ped + PROBE_GTA_PED_WEAPON_SLOTS_OFFSET +
+           ((uintptr_t)slot * PROBE_GTA_WEAPON_SLOT_SIZE);
+  if (!memory_is_readable(weapon, PROBE_GTA_WEAPON_SLOT_SIZE)) {
+    return;
+  }
+  state->weapon = (DWORD)weapon;
+  memcpy(&state->weapon_type, (const void *)weapon,
+         sizeof(state->weapon_type));
+  memcpy(&state->weapon_state, (const void *)(weapon + 0x04u),
+         sizeof(state->weapon_state));
+  memcpy(&state->weapon_ammo_in_clip,
+         (const void *)(weapon + 0x08u),
+         sizeof(state->weapon_ammo_in_clip));
+  memcpy(&state->weapon_total_ammo,
+         (const void *)(weapon + 0x0cu),
+         sizeof(state->weapon_total_ammo));
+  state->valid_mask |= PROBE_COMBAT_STATE_WEAPON_VALID;
+}
+
+static void begin_aim_bullet_jetpack_trace(
+    probe_aim_bullet_jetpack_trace *trace, BYTE kind, DWORD hook_rva,
+    DWORD object, DWORD input, void *caller) {
+  if (trace == NULL) {
+    return;
+  }
+  memset(trace, 0, sizeof(*trace));
+  trace->event_seq =
+      InterlockedIncrement(&g_aim_bullet_jetpack_event_seq);
+  trace->tick = GetTickCount();
+  trace->thread_id = GetCurrentThreadId();
+  trace->caller_rva = samp_rva_from_address(caller);
+  trace->hook_rva = hook_rva;
+  trace->object = object;
+  trace->input = input;
+  trace->kind = kind;
+  if (read_u32_checked(PROBE_GTA_US10_FRAME_COUNTER_ADDR,
+                       &trace->gta_frame)) {
+    trace->frame_valid = 1u;
+  }
+}
+
+static void publish_aim_bullet_jetpack_trace(
+    probe_aim_bullet_jetpack_trace *trace) {
+  probe_aim_bullet_jetpack_trace *slot;
+  LONG ring_seq;
+
+  if (trace == NULL) {
+    return;
+  }
+  ring_seq =
+      InterlockedIncrement(&g_aim_bullet_jetpack_trace_write_seq);
+  trace->ring_seq = ring_seq;
+  slot = &g_aim_bullet_jetpack_trace_ring[
+      ((unsigned long)(ring_seq - 1)) %
+      PROBE_AIM_BULLET_JETPACK_TRACE_RING];
+  InterlockedExchange(&slot->committed_seq, 0);
+  memcpy((BYTE *)slot + sizeof(slot->committed_seq),
+         (const BYTE *)trace + sizeof(trace->committed_seq),
+         sizeof(*trace) - sizeof(trace->committed_seq));
+  MemoryBarrier();
+  InterlockedExchange(&slot->committed_seq, ring_seq);
+}
+
+static void WINAPI hook_samp_aim_context_install(DWORD player_index) {
+  probe_aim_bullet_jetpack_trace trace;
+  DWORD gta_ped =
+      resolve_gta_ped_for_player_index_readonly(player_index);
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_AIM_INSTALL,
+      PROBE_SAMP_R5_AIM_CONTEXT_INSTALL_RVA, gta_ped, 0u,
+      probe_return_address());
+  trace.args[0] = player_index;
+  capture_combat_ped_state(
+      0u, gta_ped, player_index, 1, &trace.before);
+  if (g_orig_samp_aim_context_install != NULL) {
+    ((probe_samp_aim_context_install_fn)
+         g_orig_samp_aim_context_install)(player_index);
+  }
+  capture_combat_ped_state(
+      0u, gta_ped, player_index, 1, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+}
+
+static void __cdecl hook_samp_aim_context_restore(void) {
+  probe_aim_bullet_jetpack_trace trace;
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_AIM_RESTORE,
+      PROBE_SAMP_R5_AIM_CONTEXT_RESTORE_RVA, 0u, 0u,
+      probe_return_address());
+  capture_combat_ped_state(0u, 0u, 0u, 0, &trace.before);
+  if (g_orig_samp_aim_context_restore != NULL) {
+    ((probe_samp_aim_context_restore_fn)
+         g_orig_samp_aim_context_restore)();
+  }
+  capture_combat_ped_state(0u, 0u, 0u, 0, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+}
+
+static void PROBE_THISCALL hook_samp_player_ped_set_keys(
+    void *player_ped, DWORD keys, DWORD left_right, DWORD up_down) {
+  probe_aim_bullet_jetpack_trace trace;
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_SET_KEYS,
+      PROBE_SAMP_R5_PLAYER_PED_SET_KEYS_RVA,
+      (DWORD)(uintptr_t)player_ped, 0u, probe_return_address());
+  trace.args[0] = keys;
+  trace.args[1] = left_right;
+  trace.args[2] = up_down;
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.before);
+  if (g_orig_samp_player_ped_set_keys != NULL) {
+    ((probe_samp_player_ped_set_keys_fn)
+         g_orig_samp_player_ped_set_keys)(
+        player_ped, keys, left_right, up_down);
+  }
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+}
+
+static void PROBE_THISCALL hook_samp_player_ped_set_shot_context(
+    void *player_ped, const void *shot_context) {
+  probe_aim_bullet_jetpack_trace trace;
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_SHOT_CONTEXT,
+      PROBE_SAMP_R5_PLAYER_PED_SET_SHOT_CONTEXT_RVA,
+      (DWORD)(uintptr_t)player_ped, (DWORD)(uintptr_t)shot_context,
+      probe_return_address());
+  capture_combat_shot_input(shot_context, &trace.input_shot);
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.before);
+  if (g_orig_samp_player_ped_set_shot_context != NULL) {
+    ((probe_samp_player_ped_set_shot_context_fn)
+         g_orig_samp_player_ped_set_shot_context)(
+        player_ped, shot_context);
+  }
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+}
+
+static int PROBE_THISCALL hook_samp_player_ped_fire_remote(
+    void *player_ped) {
+  probe_aim_bullet_jetpack_trace trace;
+  int result = 0;
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_FIRE_REMOTE,
+      PROBE_SAMP_R5_PLAYER_PED_FIRE_REMOTE_RVA,
+      (DWORD)(uintptr_t)player_ped, 0u, probe_return_address());
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.before);
+  if (g_orig_samp_player_ped_fire_remote != NULL) {
+    result = ((probe_samp_player_ped_fire_remote_fn)
+                  g_orig_samp_player_ped_fire_remote)(player_ped);
+  }
+  trace.result = (DWORD)result;
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+  return result;
+}
+
+static void PROBE_THISCALL hook_samp_player_ped_start_jetpack(
+    void *player_ped) {
+  probe_aim_bullet_jetpack_trace trace;
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_START,
+      PROBE_SAMP_R5_PLAYER_PED_START_JETPACK_RVA,
+      (DWORD)(uintptr_t)player_ped, 0u, probe_return_address());
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.before);
+  if (g_orig_samp_player_ped_start_jetpack != NULL) {
+    ((probe_samp_player_ped_jetpack_void_fn)
+         g_orig_samp_player_ped_start_jetpack)(player_ped);
+  }
+  trace.result = 1u;
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+}
+
+static void PROBE_THISCALL hook_samp_player_ped_stop_jetpack(
+    void *player_ped) {
+  probe_aim_bullet_jetpack_trace trace;
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_STOP,
+      PROBE_SAMP_R5_PLAYER_PED_STOP_JETPACK_RVA,
+      (DWORD)(uintptr_t)player_ped, 0u, probe_return_address());
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.before);
+  if (g_orig_samp_player_ped_stop_jetpack != NULL) {
+    ((probe_samp_player_ped_jetpack_void_fn)
+         g_orig_samp_player_ped_stop_jetpack)(player_ped);
+  }
+  trace.result = 1u;
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+}
+
+static int PROBE_THISCALL hook_samp_player_ped_is_in_jetpack(
+    void *player_ped) {
+  probe_aim_bullet_jetpack_trace trace;
+  int result = 0;
+
+  begin_aim_bullet_jetpack_trace(
+      &trace, PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_QUERY,
+      PROBE_SAMP_R5_PLAYER_PED_IS_IN_JETPACK_RVA,
+      (DWORD)(uintptr_t)player_ped, 0u, probe_return_address());
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.before);
+  if (g_orig_samp_player_ped_is_in_jetpack != NULL) {
+    result = ((probe_samp_player_ped_jetpack_query_fn)
+                  g_orig_samp_player_ped_is_in_jetpack)(player_ped);
+  }
+  trace.result = (DWORD)result;
+  capture_combat_ped_state(
+      trace.object, 0u, 0u, 0, &trace.after);
+  publish_aim_bullet_jetpack_trace(&trace);
+  return result;
+}
+
+static const char *aim_bullet_jetpack_event_name(BYTE kind) {
+  switch (kind) {
+    case PROBE_AIM_BULLET_JETPACK_EVENT_AIM_INSTALL:
+      return "aim_install";
+    case PROBE_AIM_BULLET_JETPACK_EVENT_AIM_RESTORE:
+      return "aim_restore";
+    case PROBE_AIM_BULLET_JETPACK_EVENT_SET_KEYS:
+      return "set_keys";
+    case PROBE_AIM_BULLET_JETPACK_EVENT_SHOT_CONTEXT:
+      return "shot_context";
+    case PROBE_AIM_BULLET_JETPACK_EVENT_FIRE_REMOTE:
+      return "fire_remote";
+    case PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_START:
+      return "jetpack_start";
+    case PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_STOP:
+      return "jetpack_stop";
+    case PROBE_AIM_BULLET_JETPACK_EVENT_JETPACK_QUERY:
+      return "jetpack_query";
+    default:
+      return "unknown";
+  }
+}
+
+static void log_aim_bullet_jetpack_state(
+    const probe_aim_bullet_jetpack_trace *trace, const char *phase,
+    const probe_combat_ped_state *state) {
+  float aim[PROBE_SAMP_R5_AIM_CONTEXT_BYTES / sizeof(DWORD)];
+  float source[PROBE_SAMP_R5_AIM_CONTEXT_BYTES / sizeof(DWORD)];
+
+  if (trace == NULL || phase == NULL || state == NULL) {
+    return;
+  }
+  memcpy(aim, state->aim_words, sizeof(aim));
+  memcpy(source, state->aim_source_words, sizeof(source));
+  probe_log(
+      "aim_bullet_jetpack_state_r5: seq=%ld event=%ld phase=%s "
+      "valid=0x%08lx player_ped=0x%08lx player_index=%u "
+      "gta_ped=0x%08lx vtable=0x%08lx matrix=0x%08lx "
+      "basis_r=(%.6f,%.6f,%.6f) basis_f=(%.6f,%.6f,%.6f) "
+      "basis_u=(%.6f,%.6f,%.6f) pos=(%.6f,%.6f,%.6f) "
+      "ped_flags=0x%08lx ped_state=0x%08lx aiming_rotation=%.6f "
+      "intelligence=0x%08lx task_roots="
+      "(0x%08lx,0x%08lx,0x%08lx,0x%08lx,0x%08lx,"
+      "0x%08lx,0x%08lx,0x%08lx,0x%08lx,0x%08lx,0x%08lx) "
+      "jetpack_task=0x%08lx jetpack_vtable=0x%08lx "
+      "weapon_slot=%u weapon=0x%08lx type=%lu state=%lu "
+      "clip=%lu total=%lu "
+      "shot_valid=%u shot_active=%lu shot_header=0x%08lx "
+      "shot_target=0x%08lx origin=(%.6f,%.6f,%.6f) "
+      "hit=(%.6f,%.6f,%.6f) offset=(%.6f,%.6f,%.6f) "
+      "evidence=STATIC_037,GTA_REVERSED_REF,PROBE_TRACE,TODO_VERIFY",
+      (long)trace->ring_seq, (long)trace->event_seq, phase,
+      (unsigned long)state->valid_mask,
+      (unsigned long)state->player_ped, (unsigned)state->player_index,
+      (unsigned long)state->gta_ped, (unsigned long)state->ped_vtable,
+      (unsigned long)state->matrix,
+      (double)state->matrix_right[0], (double)state->matrix_right[1],
+      (double)state->matrix_right[2],
+      (double)state->matrix_forward[0],
+      (double)state->matrix_forward[1],
+      (double)state->matrix_forward[2],
+      (double)state->matrix_up[0], (double)state->matrix_up[1],
+      (double)state->matrix_up[2],
+      (double)state->matrix_position[0],
+      (double)state->matrix_position[1],
+      (double)state->matrix_position[2],
+      (unsigned long)state->ped_flags,
+      (unsigned long)state->ped_state,
+      (double)state->aiming_rotation,
+      (unsigned long)state->intelligence,
+      (unsigned long)state->task_roots[0],
+      (unsigned long)state->task_roots[1],
+      (unsigned long)state->task_roots[2],
+      (unsigned long)state->task_roots[3],
+      (unsigned long)state->task_roots[4],
+      (unsigned long)state->task_roots[5],
+      (unsigned long)state->task_roots[6],
+      (unsigned long)state->task_roots[7],
+      (unsigned long)state->task_roots[8],
+      (unsigned long)state->task_roots[9],
+      (unsigned long)state->task_roots[10],
+      (unsigned long)state->jetpack_task,
+      (unsigned long)state->jetpack_task_vtable,
+      (unsigned)state->weapon_slot, (unsigned long)state->weapon,
+      (unsigned long)state->weapon_type,
+      (unsigned long)state->weapon_state,
+      (unsigned long)state->weapon_ammo_in_clip,
+      (unsigned long)state->weapon_total_ammo,
+      (unsigned)state->stored_shot.valid,
+      (unsigned long)state->stored_shot.active,
+      (unsigned long)state->stored_shot.header,
+      (unsigned long)state->stored_shot.target,
+      (double)state->stored_shot.origin[0],
+      (double)state->stored_shot.origin[1],
+      (double)state->stored_shot.origin[2],
+      (double)state->stored_shot.hit[0],
+      (double)state->stored_shot.hit[1],
+      (double)state->stored_shot.hit[2],
+      (double)state->stored_shot.offset[0],
+      (double)state->stored_shot.offset[1],
+      (double)state->stored_shot.offset[2]);
+  probe_log(
+      "aim_bullet_jetpack_aim_r5: seq=%ld event=%ld phase=%s "
+      "active=0x%08lx source=0x%08lx "
+      "active_f=(%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+      "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f) "
+      "source_f=(%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+      "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f) "
+      "active_raw="
+      "(%08lx,%08lx,%08lx,%08lx,%08lx,%08lx,"
+      "%08lx,%08lx,%08lx,%08lx,%08lx,%08lx) "
+      "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
+      (long)trace->ring_seq, (long)trace->event_seq, phase,
+      (unsigned long)state->aim_context,
+      (unsigned long)state->aim_source,
+      (double)aim[0], (double)aim[1], (double)aim[2],
+      (double)aim[3], (double)aim[4], (double)aim[5],
+      (double)aim[6], (double)aim[7], (double)aim[8],
+      (double)aim[9], (double)aim[10], (double)aim[11],
+      (double)source[0], (double)source[1], (double)source[2],
+      (double)source[3], (double)source[4], (double)source[5],
+      (double)source[6], (double)source[7], (double)source[8],
+      (double)source[9], (double)source[10], (double)source[11],
+      (unsigned long)state->aim_words[0],
+      (unsigned long)state->aim_words[1],
+      (unsigned long)state->aim_words[2],
+      (unsigned long)state->aim_words[3],
+      (unsigned long)state->aim_words[4],
+      (unsigned long)state->aim_words[5],
+      (unsigned long)state->aim_words[6],
+      (unsigned long)state->aim_words[7],
+      (unsigned long)state->aim_words[8],
+      (unsigned long)state->aim_words[9],
+      (unsigned long)state->aim_words[10],
+      (unsigned long)state->aim_words[11]);
+}
+
+static void flush_aim_bullet_jetpack_trace_ring(void) {
+  LONG write_seq = InterlockedCompareExchange(
+      &g_aim_bullet_jetpack_trace_write_seq, 0, 0);
+  LONG pending =
+      write_seq - g_aim_bullet_jetpack_trace_flushed_seq;
+
+  if (pending > (LONG)PROBE_AIM_BULLET_JETPACK_TRACE_RING) {
+    LONG skipped =
+        pending - (LONG)PROBE_AIM_BULLET_JETPACK_TRACE_RING;
+    g_aim_bullet_jetpack_trace_flushed_seq += skipped;
+    g_aim_bullet_jetpack_trace_overflow_count += skipped;
+    probe_log(
+        "aim_bullet_jetpack_r5: overflow skipped=%ld "
+        "total_skipped=%ld write_seq=%ld",
+        (long)skipped,
+        (long)g_aim_bullet_jetpack_trace_overflow_count,
+        (long)write_seq);
+  }
+
+  while (g_aim_bullet_jetpack_trace_flushed_seq < write_seq) {
+    LONG next_seq = g_aim_bullet_jetpack_trace_flushed_seq + 1;
+    probe_aim_bullet_jetpack_trace *slot =
+        &g_aim_bullet_jetpack_trace_ring[
+            ((unsigned long)(next_seq - 1)) %
+            PROBE_AIM_BULLET_JETPACK_TRACE_RING];
+    probe_aim_bullet_jetpack_trace trace;
+    LONG committed =
+        InterlockedCompareExchange(&slot->committed_seq, 0, 0);
+
+    if (committed != next_seq) {
+      break;
+    }
+    MemoryBarrier();
+    memcpy(&trace, slot, sizeof(trace));
+    MemoryBarrier();
+    if (InterlockedCompareExchange(&slot->committed_seq, 0, 0) !=
+        next_seq) {
+      continue;
+    }
+    probe_log(
+        "aim_bullet_jetpack_r5: seq=%ld event=%ld tick=%lu thread=%lu "
+        "frame=%lu frame_valid=%u kind=%s caller_rva=0x%08lx "
+        "hook_rva=0x%08lx object=0x%08lx input=0x%08lx "
+        "args=(0x%08lx,0x%08lx,0x%08lx) result=0x%08lx "
+        "input_shot_valid=%u input_header=0x%08lx "
+        "input_target=0x%08lx origin=(%.6f,%.6f,%.6f) "
+        "hit=(%.6f,%.6f,%.6f) offset=(%.6f,%.6f,%.6f) "
+        "static_callers="
+        "packet206_store:+0x1658D;packet206_fire:+0x16598;"
+        "remote_process_keys:+0x16FA1;"
+        "fire_aim_install:+0xAFAFA;fire_aim_restore:+0xAFC52 "
+        "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
+        (long)trace.ring_seq, (long)trace.event_seq,
+        (unsigned long)trace.tick, (unsigned long)trace.thread_id,
+        (unsigned long)trace.gta_frame, (unsigned)trace.frame_valid,
+        aim_bullet_jetpack_event_name(trace.kind),
+        (unsigned long)trace.caller_rva,
+        (unsigned long)trace.hook_rva,
+        (unsigned long)trace.object, (unsigned long)trace.input,
+        (unsigned long)trace.args[0],
+        (unsigned long)trace.args[1],
+        (unsigned long)trace.args[2],
+        (unsigned long)trace.result,
+        (unsigned)trace.input_shot.valid,
+        (unsigned long)trace.input_shot.header,
+        (unsigned long)trace.input_shot.target,
+        (double)trace.input_shot.origin[0],
+        (double)trace.input_shot.origin[1],
+        (double)trace.input_shot.origin[2],
+        (double)trace.input_shot.hit[0],
+        (double)trace.input_shot.hit[1],
+        (double)trace.input_shot.hit[2],
+        (double)trace.input_shot.offset[0],
+        (double)trace.input_shot.offset[1],
+        (double)trace.input_shot.offset[2]);
+    log_aim_bullet_jetpack_state(&trace, "pre", &trace.before);
+    log_aim_bullet_jetpack_state(&trace, "post", &trace.after);
+    g_aim_bullet_jetpack_trace_flushed_seq = next_seq;
+  }
+}
+
 static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
     void *rakclient, const BYTE *rpc_id_ptr, probe_raknet_bitstream_prefix *bitstream,
-    int priority, int reliability, char ordering_channel, BYTE shift_timestamp,
-    probe_raknet_network_id network_id, probe_raknet_bitstream_prefix *reply_from_target) {
+    int priority, int reliability, char ordering_channel,
+    BYTE shift_timestamp) {
   BYTE result = 0;
   BYTE rpc_id = 0xffu;
   int bits = -1;
@@ -3185,13 +6705,28 @@ static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
   char payload[PROBE_PAYLOAD_PREVIEW_BYTES * 3 + 8];
   char command[129];
   void *caller = probe_return_address();
+  int dialog_focused;
+  int pickup_focused;
   int focused;
 
   if (memory_is_readable((uintptr_t)rpc_id_ptr, sizeof(*rpc_id_ptr))) {
     rpc_id = *rpc_id_ptr;
   }
-  focused = rpc_id == PROBE_SERVER_COMMAND_RPC || rpc_id == PROBE_DIALOG_RESPONSE_RPC ||
-            rpc_id == PROBE_MENU_SELECT_RPC || rpc_id == PROBE_MENU_QUIT_RPC;
+  dialog_focused =
+      dialog_menu_rpc_hooks_enabled() &&
+      (rpc_id == PROBE_SERVER_COMMAND_RPC ||
+       rpc_id == PROBE_DIALOG_RESPONSE_RPC ||
+       rpc_id == PROBE_MENU_SELECT_RPC || rpc_id == PROBE_MENU_QUIT_RPC);
+  /*
+   * The shared vtable hook is installed only by a focused dialog/pickup
+   * profile. Do not re-read the environment or flag files on this RakNet
+   * call path; probe_pickup_is_active() is an atomic installed-state check
+   * and remains false for a dialog-only run.
+   */
+  pickup_focused =
+      probe_pickup_is_active() &&
+      (rpc_id == PROBE_PICKUP_RPC || rpc_id == PROBE_PICKUP_WEAPON_RPC);
+  focused = dialog_focused || pickup_focused;
 
   payload[0] = '\0';
   command[0] = '\0';
@@ -3234,11 +6769,10 @@ static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
       probe_log("dialog_menu_rpc: before rpc=%u name=ServerCommand caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d command_length=%d command='%s' priority=%d reliability=%d "
                 "channel=%d shift_timestamp=%u payload='%s' rakclient=%p bitstream=%p "
-                "network_local=%u reply=%p evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "overload=short evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, caller, samp_rva_from_address(caller), bits, bytes,
                 command_length, command, priority, reliability, (int)ordering_channel,
-                (unsigned)shift_timestamp, payload, rakclient, bitstream,
-                (unsigned)network_id.local_system_id, reply_from_target);
+                (unsigned)shift_timestamp, payload, rakclient, bitstream);
     } else if (rpc_id == PROBE_DIALOG_RESPONSE_RPC && bytes >= 6 &&
         memory_is_readable((uintptr_t)data, (size_t)bytes)) {
       short dialog_id;
@@ -3249,41 +6783,44 @@ static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
       probe_log("dialog_menu_rpc: before rpc=%u name=DialogResponse caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d dialog=%d response=%u list_item=%d input_length=%u "
                 "priority=%d reliability=%d channel=%d shift_timestamp=%u payload='%s' "
-                "rakclient=%p bitstream=%p network_local=%u reply=%p "
-                "evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "rakclient=%p bitstream=%p overload=short "
+                "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, caller, samp_rva_from_address(caller), bits, bytes,
                 (int)dialog_id, (unsigned)data[2], (int)list_item, input_length,
                 priority, reliability, (int)ordering_channel, (unsigned)shift_timestamp,
-                payload, rakclient, bitstream, (unsigned)network_id.local_system_id,
-                reply_from_target);
+                payload, rakclient, bitstream);
     } else if (rpc_id == PROBE_MENU_SELECT_RPC && bytes >= 1 &&
                memory_is_readable((uintptr_t)data, 1)) {
       probe_log("dialog_menu_rpc: before rpc=%u name=MenuSelect caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d row=%u priority=%d reliability=%d channel=%d "
                 "shift_timestamp=%u payload='%s' rakclient=%p bitstream=%p "
-                "network_local=%u reply=%p evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "overload=short evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, caller, samp_rva_from_address(caller), bits, bytes,
                 (unsigned)data[0], priority, reliability, (int)ordering_channel,
-                (unsigned)shift_timestamp, payload, rakclient, bitstream,
-                (unsigned)network_id.local_system_id, reply_from_target);
-    } else {
+                (unsigned)shift_timestamp, payload, rakclient, bitstream);
+    } else if (dialog_focused) {
       probe_log("dialog_menu_rpc: before rpc=%u name=%s caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d priority=%d reliability=%d channel=%d shift_timestamp=%u "
-                "payload='%s' rakclient=%p bitstream=%p network_local=%u reply=%p "
-                "evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "payload='%s' rakclient=%p bitstream=%p overload=short "
+                "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, rpc_id == PROBE_MENU_QUIT_RPC ? "MenuQuit" : "focused_invalid",
                 caller, samp_rva_from_address(caller), bits, bytes, priority, reliability,
                 (int)ordering_channel, (unsigned)shift_timestamp, payload, rakclient,
-                bitstream, (unsigned)network_id.local_system_id, reply_from_target);
+                bitstream);
     }
   }
 
   if (g_orig_rakclient_rpc_bitstream != NULL) {
     result = ((probe_rakclient_rpc_bitstream_fn)g_orig_rakclient_rpc_bitstream)(
         rakclient, rpc_id_ptr, bitstream, priority, reliability, ordering_channel,
-        shift_timestamp, network_id, reply_from_target);
+        shift_timestamp);
   }
-  if (focused) {
+  if (pickup_focused) {
+    probe_pickup_observe_rpc(
+        rpc_id, data, bits, priority, reliability, ordering_channel,
+        samp_rva_from_address(caller), result);
+  }
+  if (dialog_focused) {
     probe_log("dialog_menu_rpc: after rpc=%u caller_samp_rva=0x%08lx result=%u "
               "evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
               (unsigned)rpc_id, samp_rva_from_address(caller), (unsigned)result);
@@ -3300,17 +6837,20 @@ static int install_dialog_menu_rpc_hook(int log_summary) {
   void *current;
   DWORD old_protect;
   DWORD restore_protect;
+  const char *hook_log_name =
+      dialog_menu_rpc_hooks_enabled() ? "dialog_menu_rpc_hook"
+                                      : "pickup_rpc_hook";
 
-  if (!dialog_menu_rpc_hooks_enabled()) {
+  if (!dialog_menu_rpc_hooks_enabled() && !pickup_hooks_enabled()) {
     if (log_summary) {
-      probe_log("dialog_menu_rpc_hook: disabled; enable with SAMP_PROBE_DIALOG_MENU_RPC_HOOKS=1 or %s",
-                PROBE_DIALOG_MENU_RPC_HOOKS_FLAG);
+      probe_log("focused_rpc_hook: disabled; enable dialog/menu or pickup "
+                "RPC hooks");
     }
     return 0;
   }
   if (!samp_r5_identity_matches()) {
     if (log_summary) {
-      probe_log("dialog_menu_rpc_hook: skip reason=unsupported_identity");
+      probe_log("%s: skip reason=unsupported_identity", hook_log_name);
     }
     return 0;
   }
@@ -3320,8 +6860,8 @@ static int install_dialog_menu_rpc_hook(int log_summary) {
   netgame_value = read_u32_or(g_samp_base + PROBE_SAMP_R5_NETGAME_PTR_RVA, 0u);
   if (netgame_value < 0x10000u || !memory_is_readable((uintptr_t)netgame_value, sizeof(DWORD))) {
     if (log_summary) {
-      probe_log("dialog_menu_rpc_hook: waiting reason=netgame_unavailable netgame=%p",
-                (void *)(uintptr_t)netgame_value);
+      probe_log("%s: waiting reason=netgame_unavailable netgame=%p",
+                hook_log_name, (void *)(uintptr_t)netgame_value);
     }
     return 0;
   }
@@ -3329,8 +6869,9 @@ static int install_dialog_menu_rpc_hook(int log_summary) {
   rakclient = (void *)(uintptr_t)rakclient_value;
   if (rakclient_value < 0x10000u || !memory_is_readable((uintptr_t)rakclient, sizeof(void *))) {
     if (log_summary) {
-      probe_log("dialog_menu_rpc_hook: waiting reason=rakclient_unavailable netgame=%p rakclient=%p",
-                (void *)(uintptr_t)netgame_value, rakclient);
+      probe_log("%s: waiting reason=rakclient_unavailable netgame=%p "
+                "rakclient=%p",
+                hook_log_name, (void *)(uintptr_t)netgame_value, rakclient);
     }
     return 0;
   }
@@ -3344,25 +6885,39 @@ static int install_dialog_menu_rpc_hook(int log_summary) {
   if (current == (void *)hook_rakclient_rpc_bitstream) {
     return 1;
   }
-  if (!address_in_samp(current)) {
+  /* STATIC_037:
+   * Ordinary R5 client RPC sends, including CPickupPool::PickedUp at
+   * samp.dll+0x13440, dispatch through vtable +0x64 (index 25).  That short
+   * BitStream overload is the six-stack-argument wrapper at +0x34620 and
+   * returns with `ret 0x18`.  Index 26/+0x68 is the distinct extended
+   * NetworkID/reply overload at +0x345B0 and cannot observe this call path. */
+  if (!address_in_samp(current) ||
+      samp_rva_from_address(current) !=
+          PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA) {
     if (log_summary) {
-      probe_log("dialog_menu_rpc_hook: skip reason=slot_target_outside_samp rakclient=%p vtable=%p "
-                "index=%u target=%p",
-                rakclient, vtable, (unsigned)PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX, current);
+      probe_log("%s: skip reason=unexpected_short_bitstream_target "
+                "rakclient=%p vtable=%p index=%u target=%p "
+                "actual_samp_rva=0x%08lx expected_samp_rva=0x%08lx",
+                hook_log_name, rakclient, vtable,
+                (unsigned)PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX, current,
+                samp_rva_from_address(current),
+                (unsigned long)PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA);
     }
     return 0;
   }
   if (g_orig_rakclient_rpc_bitstream != NULL && current != g_orig_rakclient_rpc_bitstream) {
     if (log_summary) {
-      probe_log("dialog_menu_rpc_hook: skip reason=vtable_changed rakclient=%p current=%p original=%p",
-                rakclient, current, g_orig_rakclient_rpc_bitstream);
+      probe_log("%s: skip reason=vtable_changed rakclient=%p current=%p "
+                "original=%p",
+                hook_log_name, rakclient, current,
+                g_orig_rakclient_rpc_bitstream);
     }
     return 0;
   }
   if (!VirtualProtect(slot, sizeof(void *), PAGE_EXECUTE_READWRITE, &old_protect)) {
     if (log_summary) {
-      probe_log("dialog_menu_rpc_hook: VirtualProtect failed slot=%p err=%lu", slot,
-                (unsigned long)GetLastError());
+      probe_log("%s: VirtualProtect failed slot=%p err=%lu",
+                hook_log_name, slot, (unsigned long)GetLastError());
     }
     return 0;
   }
@@ -3370,10 +6925,10 @@ static int install_dialog_menu_rpc_hook(int log_summary) {
   *slot = (void *)hook_rakclient_rpc_bitstream;
   FlushInstructionCache(GetCurrentProcess(), slot, sizeof(void *));
   (void)VirtualProtect(slot, sizeof(void *), old_protect, &restore_protect);
-  probe_log("dialog_menu_rpc_hook: installed netgame=%p rakclient=%p vtable=%p index=%u "
+  probe_log("%s: installed netgame=%p rakclient=%p vtable=%p index=%u "
             "slot=%p original=%p original_samp_rva=0x%08lx replacement=%p "
-            "evidence=INFERRED,PROBE_TRACE,TODO_VERIFY",
-            (void *)(uintptr_t)netgame_value, rakclient, vtable,
+            "overload=short evidence=STATIC_037,TODO_VERIFY",
+            hook_log_name, (void *)(uintptr_t)netgame_value, rakclient, vtable,
             (unsigned)PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX, slot, current,
             samp_rva_from_address(current), (void *)hook_rakclient_rpc_bitstream);
   return 1;
@@ -4467,11 +8022,18 @@ static DWORD WINAPI probe_worker(LPVOID param) {
   probe_log("probe: attached build=%s %s", __DATE__, __TIME__);
   probe_log("probe: options asset_path_hooks=%d asset_read_hooks=%d samp_code_hooks=%d gta_asset_hooks=%d "
             "object_info=%d custom_object_heavy=%d textdraw_hooks=%d textdraw_verbose=%d textdraw_render=%d "
-            "font5_hooks=%d actor_hooks=%d actor_heavy=%d rpc_gap_hooks=%d dialog_menu_rpc_hooks=%d",
+            "font5_hooks=%d actor_hooks=%d actor_heavy=%d rpc_gap_hooks=%d dialog_menu_rpc_hooks=%d "
+            "trailer_sync_hooks=%d trailer_physics_hooks=%d vehicle_lifecycle_hooks=%d "
+            "aim_bullet_jetpack_hooks=%d death_cleanup_hooks=%d pickup_hooks=%d "
+            "ui_latches_hooks=%d",
             asset_path_hooks_enabled(), asset_read_hooks_enabled(), samp_code_hooks_enabled(), gta_asset_hooks_enabled(),
             object_info_enabled(), custom_object_heavy_enabled(), textdraw_hooks_enabled(), textdraw_verbose_enabled(),
             textdraw_render_enabled(), font5_hooks_enabled(), actor_hooks_enabled(), actor_heavy_enabled(),
-            rpc_gap_hooks_enabled(), dialog_menu_rpc_hooks_enabled());
+            rpc_gap_hooks_enabled(), dialog_menu_rpc_hooks_enabled(), trailer_sync_hooks_enabled(),
+            trailer_physics_hooks_enabled(), vehicle_lifecycle_hooks_enabled(),
+            aim_bullet_jetpack_hooks_enabled(),
+            death_cleanup_hooks_enabled(), pickup_hooks_enabled(),
+            ui_latches_hooks_enabled());
   if (custom_object_heavy_enabled()) {
     probe_log("custom_object_heavy: store_addresses model_info_ptrs=0x%08lx atomic_count=0x%08lx "
               "time_count=0x%08lx clump_count=0x%08lx low_range=%u-%u high_range=%u-%u "
@@ -4520,6 +8082,43 @@ static DWORD WINAPI probe_worker(LPVOID param) {
   hooks_disabled = hooks_disabled_by_flag();
   if (hooks_disabled) {
     probe_log("hook: disabled by flag/env");
+  } else if (trailer_sync_hooks_enabled() ||
+             trailer_physics_hooks_enabled() ||
+             vehicle_lifecycle_hooks_enabled() ||
+             aim_bullet_jetpack_hooks_enabled() ||
+             death_cleanup_hooks_enabled() ||
+             pickup_hooks_enabled() ||
+             ui_latches_hooks_enabled()) {
+    /*
+     * STATIC_037 + PROBE_TRACE:
+     * Focused trailer and vehicle-lifecycle captures deliberately exclude the
+     * normal IAT, Winsock and unrelated code-hook sets. Their synchronous
+     * per-call logs would perturb the calls being measured.
+     */
+    probe_log(
+        "hook: focused_mode=r5_memory sync=%d physics=%d lifecycle=%d "
+        "aim_bullet_jetpack=%d death_cleanup=%d pickup=%d ui_latches=%d "
+        "normal_hook_sets=skipped",
+        trailer_sync_hooks_enabled(), trailer_physics_hooks_enabled(),
+        vehicle_lifecycle_hooks_enabled(),
+        aim_bullet_jetpack_hooks_enabled(),
+        death_cleanup_hooks_enabled(), pickup_hooks_enabled(),
+        ui_latches_hooks_enabled());
+    install_samp_trailer_sync_code_hook(1);
+    install_samp_vehicle_lifecycle_hooks(1);
+    install_samp_aim_bullet_jetpack_hooks(1);
+    (void)probe_death_cleanup_install(
+        g_samp_module, g_samp_size, death_cleanup_hooks_enabled(),
+        env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS"), g_stop_event,
+        probe_log, 1);
+    (void)probe_pickup_install(
+        g_samp_module, g_samp_size, pickup_hooks_enabled(),
+        env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS"), probe_log, 1);
+    (void)probe_ui_latches_install(
+        g_samp_module, g_samp_size, ui_latches_hooks_enabled(),
+        env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS"), probe_log, 1);
+    install_gta_trailer_physics_hooks(1);
+    install_dialog_menu_rpc_hook(1);
   } else {
     install_iat_hooks(nt, 1);
     install_inline_hooks(1);
@@ -4539,24 +8138,69 @@ static DWORD WINAPI probe_worker(LPVOID param) {
 
   while (WaitForSingleObject(g_stop_event, PROBE_WATCH_INTERVAL_MS) == WAIT_TIMEOUT) {
     if (!hooks_disabled) {
-      (void)install_iat_hooks(nt, 0);
-      (void)install_inline_hooks(0);
-      (void)install_samp_code_hooks(0);
-      (void)install_samp_font5_code_hooks(0);
-      (void)install_samp_actor_code_hooks(0);
-      (void)install_samp_rpc_gap_code_hooks(0);
-      (void)install_dialog_menu_rpc_hook(0);
-      (void)install_samp_actor_heavy_code_hooks(0);
-      (void)install_gta_actor_heavy_code_hooks(0);
-      (void)install_gta_textdraw_code_hooks(0);
-      (void)install_gta_asset_code_hooks(0);
-      (void)install_d3d_device_hooks(0);
+      if (trailer_sync_hooks_enabled() ||
+          trailer_physics_hooks_enabled() ||
+          vehicle_lifecycle_hooks_enabled() ||
+          aim_bullet_jetpack_hooks_enabled() ||
+          death_cleanup_hooks_enabled() ||
+          pickup_hooks_enabled() ||
+          ui_latches_hooks_enabled()) {
+        (void)install_samp_trailer_sync_code_hook(0);
+        (void)install_samp_vehicle_lifecycle_hooks(0);
+        (void)install_samp_aim_bullet_jetpack_hooks(0);
+        (void)probe_death_cleanup_install(
+            g_samp_module, g_samp_size, death_cleanup_hooks_enabled(),
+            env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS"), g_stop_event,
+            probe_log, 0);
+        (void)probe_pickup_install(
+            g_samp_module, g_samp_size, pickup_hooks_enabled(),
+            env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS"), probe_log, 0);
+        (void)probe_ui_latches_install(
+            g_samp_module, g_samp_size, ui_latches_hooks_enabled(),
+            env_flag_enabled("SAMP_PROBE_NO_SAMP_CODE_HOOKS"), probe_log, 0);
+        (void)install_gta_trailer_physics_hooks(0);
+        (void)install_dialog_menu_rpc_hook(0);
+      } else {
+        (void)install_iat_hooks(nt, 0);
+        (void)install_inline_hooks(0);
+        (void)install_samp_code_hooks(0);
+        (void)install_samp_font5_code_hooks(0);
+        (void)install_samp_actor_code_hooks(0);
+        (void)install_samp_rpc_gap_code_hooks(0);
+        (void)install_dialog_menu_rpc_hook(0);
+        (void)install_samp_actor_heavy_code_hooks(0);
+        (void)install_gta_actor_heavy_code_hooks(0);
+        (void)install_gta_textdraw_code_hooks(0);
+        (void)install_gta_asset_code_hooks(0);
+        (void)install_d3d_device_hooks(0);
+      }
     }
+    flush_trailer_sync_trace_ring();
+    flush_trailer_physics_trace_ring();
+    flush_vehicle_lifecycle_trace_ring();
+    flush_aim_bullet_jetpack_trace_ring();
+    probe_death_cleanup_flush(probe_log);
+    probe_pickup_flush(probe_log);
+    probe_ui_latches_flush(probe_log);
     sample_watchpoints();
     sample_transition_state("tick");
   }
 
+  flush_trailer_sync_trace_ring();
+  flush_trailer_physics_trace_ring();
+  flush_vehicle_lifecycle_trace_ring();
+  flush_aim_bullet_jetpack_trace_ring();
+  probe_death_cleanup_flush(probe_log);
+  probe_pickup_flush(probe_log);
+  probe_ui_latches_flush(probe_log);
+  probe_ui_latches_uninstall(probe_log);
+  probe_pickup_uninstall(probe_log);
+  probe_death_cleanup_uninstall(probe_log);
+  uninstall_samp_aim_bullet_jetpack_hooks();
+  uninstall_samp_vehicle_lifecycle_hooks();
+  uninstall_gta_trailer_physics_hooks();
   probe_log("probe: stopping");
+  probe_death_cleanup_complete_terminal_drain(probe_log);
   return 0;
 }
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import time
 from pathlib import Path
@@ -17,9 +18,16 @@ VK_RETURN = 0x0D
 VK_SPACE = 0x20
 VK_A = ord("A")
 VK_D = ord("D")
+VK_G = ord("G")
 VK_H = ord("H")
 VK_S = ord("S")
 VK_W = ord("W")
+ANGLE_SWEEP_TARGET_DEGREES = 35.0
+ANGLE_SWEEP_TOLERANCE_DEGREES = 2.0
+ANGLE_SWEEP_MOUSE_PULSE_X = 6
+ANGLE_SWEEP_PULSE_SECONDS = 0.08
+ANGLE_SWEEP_NETWORK_SETTLE_SECONDS = 0.6
+ANGLE_SWEEP_MAX_PULSES = 120
 DEFAULT_TEST_CMDS_REQUEST = (
     Path(__file__).resolve().parents[2]
     / "omp-server-bare"
@@ -106,6 +114,12 @@ def queue_sync_pair_scenario(
 
     deadline = time.monotonic() + timeout_seconds
     request_token = f" request={request_id} "
+    edge_setup_required = scenario in {
+        "passenger",
+        "passenger_g",
+        "unoccupied",
+        "trailer",
+    }
     while time.monotonic() < deadline:
         if results_path.exists():
             result_bytes = results_path.read_bytes()
@@ -120,10 +134,32 @@ def queue_sync_pair_scenario(
                         f"sync_pair rejected scenario {scenario!r}: {line}"
                     )
                 if (
+                    edge_setup_required
+                    and "marker=EDGE_SETUP " in line
+                    and f" scenario={scenario} " in line
+                ):
+                    if " status=FAIL " in line:
+                        raise RuntimeError(
+                            f"sync_pair failed edge setup {scenario!r}: {line}"
+                        )
+                    if " status=PASS " in line:
+                        acknowledged = {
+                            "event": "sync_pair_edge_setup_acknowledged",
+                            "scenario": scenario,
+                            "request_id": request_id,
+                            "result": line,
+                            "host_time": time.time(),
+                        }
+                        output.append(acknowledged)
+                        print(json.dumps(acknowledged, sort_keys=True))
+                        return request_id
+                if (
                     "marker=REQUEST_DONE " in line
                     and " status=PASS " in line
                     and f" scenario={scenario} " in line
                 ):
+                    if edge_setup_required:
+                        continue
                     acknowledged = {
                         "event": "sync_pair_scenario_acknowledged",
                         "scenario": scenario,
@@ -139,6 +175,52 @@ def queue_sync_pair_scenario(
     raise TimeoutError(
         f"sync_pair did not acknowledge request {request_id} "
         f"for scenario {scenario!r} within {timeout_seconds:.1f}s"
+    )
+
+
+def wait_for_sync_pair_result(
+    marker: str,
+    scenario: str,
+    request_id: int,
+    results_path: Path,
+    timeout_seconds: float,
+    output: list[dict[str, Any]],
+) -> str:
+    """Wait for one request-scoped PASS/FAIL result emitted after host input."""
+    deadline = time.monotonic() + timeout_seconds
+    request_token = f" request={request_id} "
+    marker_token = f"marker={marker} "
+    while time.monotonic() < deadline:
+        if results_path.exists():
+            text = results_path.read_text(encoding="utf-8", errors="replace")
+            for line in text.splitlines():
+                if (
+                    request_token not in line
+                    or marker_token not in line
+                    or f" scenario={scenario} " not in line
+                ):
+                    continue
+                if " status=FAIL " in line:
+                    raise RuntimeError(
+                        f"sync_pair failed {scenario!r} after host input: {line}"
+                    )
+                if " status=PASS " in line:
+                    completed = {
+                        "event": "sync_pair_input_result_acknowledged",
+                        "marker": marker,
+                        "scenario": scenario,
+                        "request_id": request_id,
+                        "result": line,
+                        "host_time": time.time(),
+                    }
+                    output.append(completed)
+                    print(json.dumps(completed, sort_keys=True))
+                    return line
+        time.sleep(0.05)
+
+    raise TimeoutError(
+        f"sync_pair did not emit {marker} for request {request_id} "
+        f"and scenario {scenario!r} within {timeout_seconds:.1f}s"
     )
 
 
@@ -281,13 +363,25 @@ def drive_onfoot_weapon(
     sync_pair_request_timeout: float,
 ) -> None:
     client.command("focus")
-    queue_sync_pair_scenario(
-        scenario,
-        sync_pair_request_path,
-        sync_pair_results_path,
-        sync_pair_request_timeout,
-        output,
-    )
+    edge_stream_wakeup = scenario in {"passenger", "unoccupied", "trailer"}
+    if edge_stream_wakeup:
+        # PROBE_TRACE:
+        # In repeated two-prefix runs the unfocused original pilot could be
+        # mutually player-streamed while sending no OnPlayerUpdate during a
+        # newly created vehicle's stream-in window. Keep one ordinary movement
+        # key active until the server verifies the physical edge setup.
+        client.key(VK_W, "down")
+    try:
+        queue_sync_pair_scenario(
+            scenario,
+            sync_pair_request_path,
+            sync_pair_results_path,
+            sync_pair_request_timeout,
+            output,
+        )
+    finally:
+        if edge_stream_wakeup:
+            client.key(VK_W, "up")
     time.sleep(1.0)
     ready = sample(client, f"{scenario}_ready", output)
     time.sleep(pre_action_seconds)
@@ -344,6 +438,157 @@ def drive_onfoot_weapon(
     sample(client, f"{scenario}_after_fire", output)
 
 
+def vector_heading_degrees(x: float, y: float, label: str) -> float:
+    if not math.isfinite(x) or not math.isfinite(y) or math.hypot(x, y) < 0.05:
+        raise RuntimeError(f"{label} is unavailable or degenerate: ({x!r}, {y!r})")
+    return math.degrees(math.atan2(y, x)) % 360.0
+
+
+def signed_angle_delta_degrees(angle: float, baseline: float) -> float:
+    return (angle - baseline + 180.0) % 360.0 - 180.0
+
+
+def aim_heading_degrees(state: dict[str, Any]) -> float:
+    try:
+        front_x = float(state["aim_front_x"])
+        front_y = float(state["aim_front_y"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "reloop_control state lacks CCamera::InternalAim front-vector fields; "
+            "deploy the current control ASI before running angles"
+        ) from exc
+    return vector_heading_degrees(front_x, front_y, "aim front")
+
+
+def annotate_angle_state(
+    state: dict[str, Any],
+    baseline_heading: float,
+    mouse_pulses: int,
+) -> None:
+    heading = aim_heading_degrees(state)
+    state["aim_heading_degrees"] = heading
+    state["aim_delta_from_baseline_degrees"] = signed_angle_delta_degrees(
+        heading,
+        baseline_heading,
+    )
+    state["relative_mouse_pulses"] = mouse_pulses
+    try:
+        state["player_heading_degrees"] = vector_heading_degrees(
+            float(state["player_forward_x"]),
+            float(state["player_forward_y"]),
+            "player forward",
+        )
+    except (KeyError, TypeError, ValueError, RuntimeError):
+        state["player_heading_degrees"] = None
+
+
+def calibrate_left_aim_sign(
+    client: ControlClient,
+    baseline_heading: float,
+    output: list[dict[str, Any]],
+) -> tuple[int, int]:
+    """Return the world-heading sign produced by a physical left mouse pulse."""
+    for pulse_count in range(1, 13):
+        client.command(
+            "mouse",
+            action="move_delta",
+            x=-ANGLE_SWEEP_MOUSE_PULSE_X,
+            y=0,
+        )
+        time.sleep(ANGLE_SWEEP_PULSE_SECONDS)
+        state = client.command("state")
+        delta = signed_angle_delta_degrees(
+            aim_heading_degrees(state),
+            baseline_heading,
+        )
+        if abs(delta) >= 0.5:
+            event = {
+                "event": "angles_relative_input_calibrated",
+                "mouse_delta_x": -ANGLE_SWEEP_MOUSE_PULSE_X,
+                "pulses": pulse_count,
+                "observed_heading_delta_degrees": delta,
+                "left_heading_sign": 1 if delta > 0.0 else -1,
+                "host_time": time.time(),
+            }
+            output.append(event)
+            print(json.dumps(event, sort_keys=True))
+            return event["left_heading_sign"], pulse_count
+    raise RuntimeError(
+        "relative mouse input did not change CCamera::InternalAim after 12 "
+        "bounded pulses; angles trace would not be valid"
+    )
+
+
+def drive_aim_to_relative_target(
+    client: ControlClient,
+    output: list[dict[str, Any]],
+    label: str,
+    baseline_heading: float,
+    target_sign: int,
+    mouse_delta_x: int,
+    initial_pulses: int = 0,
+) -> dict[str, Any]:
+    """Drive to a measured relative heading and reject stalled input."""
+    best_progress = -181.0
+    stale_pulses = 0
+    pulse_count = initial_pulses
+    for _ in range(ANGLE_SWEEP_MAX_PULSES + 1):
+        state = client.command("state")
+        heading = aim_heading_degrees(state)
+        delta = signed_angle_delta_degrees(heading, baseline_heading)
+        progress = delta * target_sign
+        if progress >= (
+            ANGLE_SWEEP_TARGET_DEGREES - ANGLE_SWEEP_TOLERANCE_DEGREES
+        ):
+            # Let at least several normal aim-sync intervals reach the observer
+            # before its screenshot is requested, then prove the local heading
+            # did not fall back during that window.
+            time.sleep(ANGLE_SWEEP_NETWORK_SETTLE_SECONDS)
+            state = client.command("state")
+            heading = aim_heading_degrees(state)
+            delta = signed_angle_delta_degrees(heading, baseline_heading)
+            if delta * target_sign < (
+                ANGLE_SWEEP_TARGET_DEGREES
+                - ANGLE_SWEEP_TOLERANCE_DEGREES
+            ):
+                raise RuntimeError(
+                    f"aim heading fell back before observer capture for {label}: "
+                    f"delta={delta:.3f}"
+                )
+            state["label"] = label
+            state["host_time"] = time.time()
+            annotate_angle_state(state, baseline_heading, pulse_count)
+            output.append(state)
+            print(json.dumps(state, sort_keys=True))
+            return state
+
+        if progress > best_progress + 0.1:
+            best_progress = progress
+            stale_pulses = 0
+        else:
+            stale_pulses += 1
+            if stale_pulses >= 16:
+                raise RuntimeError(
+                    f"relative mouse input stalled before {label}: "
+                    f"best_progress={best_progress:.3f} "
+                    f"target={ANGLE_SWEEP_TARGET_DEGREES:.3f}"
+                )
+
+        client.command(
+            "mouse",
+            action="move_delta",
+            x=mouse_delta_x,
+            y=0,
+        )
+        pulse_count += 1
+        time.sleep(ANGLE_SWEEP_PULSE_SECONDS)
+
+    raise RuntimeError(
+        f"relative mouse input did not reach {label} within "
+        f"{ANGLE_SWEEP_MAX_PULSES} pulses"
+    )
+
+
 def drive_angle_sweep(
     client: ControlClient,
     output: list[dict[str, Any]],
@@ -369,7 +614,9 @@ def drive_angle_sweep(
     client.command("mouse", action="right_down", x=center_x, y=center_y)
     try:
         time.sleep(1.0)
-        sample(client, "angles_aim_baseline", output)
+        baseline = sample(client, "angles_aim_baseline", output)
+        baseline_heading = aim_heading_degrees(baseline)
+        annotate_angle_state(baseline, baseline_heading, 0)
         capture_observer(
             f"{observer_screenshot_label}_baseline"
             if observer_screenshot_label
@@ -379,20 +626,40 @@ def drive_angle_sweep(
         )
 
         # PROBE_TRACE:
-        # GTA recentres the cursor while mouse-look owns input. Repeated moves
-        # to one side therefore provide deterministic yaw deltas without
-        # depending on the host's physical mouse.
-        for direction, offset in (("left", -140), ("right", 140)):
-            for _ in range(20):
-                client.command(
-                    "mouse",
-                    action="move",
-                    x=center_x + offset,
-                    y=center_y,
-                )
-                time.sleep(0.08)
-            time.sleep(1.2)
-            sample(client, f"angles_after_{direction}", output)
+        # Runs 20260728-aim-{original,replacement}-observer-manual proved that
+        # absolute SetCursorPos/WM_MOUSEMOVE changed cursor_x but left the
+        # sampled CCamera::InternalAim camera position unchanged. Use bounded
+        # relative SendInput pulses and stop on the measured front vector, so
+        # frame-rate/input coalescing cannot silently turn the angle comparison
+        # into two identical frames.
+        left_heading_sign, calibration_pulses = calibrate_left_aim_sign(
+            client,
+            baseline_heading,
+            output,
+        )
+        for direction, target_sign, mouse_delta_x, initial_pulses in (
+            (
+                "left",
+                left_heading_sign,
+                -ANGLE_SWEEP_MOUSE_PULSE_X,
+                calibration_pulses,
+            ),
+            (
+                "right",
+                -left_heading_sign,
+                ANGLE_SWEEP_MOUSE_PULSE_X,
+                0,
+            ),
+        ):
+            drive_aim_to_relative_target(
+                client,
+                output,
+                f"angles_after_{direction}",
+                baseline_heading,
+                target_sign,
+                mouse_delta_x,
+                initial_pulses,
+            )
             capture_observer(
                 f"{observer_screenshot_label}_{direction}"
                 if observer_screenshot_label
@@ -416,6 +683,7 @@ def drive_scenario(
     observer_screenshot_label: str | None,
     observer_screenshot_count: int,
     observer_screenshot_interval: float,
+    steer_during_capture: str | None,
     active_transition: str | None,
     test_cmds_request_path: Path,
     test_cmds_results_path: Path,
@@ -471,7 +739,7 @@ def drive_scenario(
         return
 
     client.command("focus")
-    queue_sync_pair_scenario(
+    request_id = queue_sync_pair_scenario(
         scenario,
         sync_pair_request_path,
         sync_pair_results_path,
@@ -482,8 +750,14 @@ def drive_scenario(
     sample(client, f"{scenario}_ready", output)
     time.sleep(pre_action_seconds)
 
-    if scenario == "car":
+    if scenario in {"car", "trailer"}:
+        steering_key = {
+            "left": VK_A,
+            "right": VK_D,
+        }.get(steer_during_capture)
         client.key(VK_W, "down")
+        if steering_key is not None:
+            client.key(steering_key, "down")
         try:
             capture_observer(
                 observer_screenshot_label,
@@ -492,11 +766,42 @@ def drive_scenario(
             )
             time.sleep(action_seconds)
         finally:
+            if steering_key is not None:
+                client.key(steering_key, "up")
             client.key(VK_W, "up")
         hold_key(client, VK_A, 1.0)
         hold_key(client, VK_S, 0.8)
         time.sleep(1.0)
-        sample(client, "car_after_drive", output)
+        sample(client, f"{scenario}_after_drive", output)
+    elif scenario in {"passenger", "unoccupied"}:
+        capture_observer(
+            observer_screenshot_label,
+            observer_screenshot_count,
+            observer_screenshot_interval,
+        )
+        time.sleep(max(action_seconds, 1.0))
+        sample(client, f"{scenario}_after_sync", output)
+    elif scenario == "passenger_g":
+        # STATIC_037:
+        # R5 consumes the passenger control on its first pressed frame and
+        # immediately sends RPC 26. Keep VK_G down across several render/input
+        # frames without turning this into a long held-key scenario.
+        hold_key(client, VK_G, 0.15)
+        wait_for_sync_pair_result(
+            "PASSENGER_ENTRY_RESULT",
+            scenario,
+            request_id,
+            sync_pair_results_path,
+            sync_pair_request_timeout,
+            output,
+        )
+        capture_observer(
+            observer_screenshot_label,
+            observer_screenshot_count,
+            observer_screenshot_interval,
+        )
+        time.sleep(max(action_seconds, 1.0))
+        sample(client, "passenger_g_after_sync", output)
     elif scenario == "rustler":
         client.key(VK_CONTROL, "down")
         try:
@@ -557,6 +862,10 @@ def main() -> int:
             "combat",
             "car",
             "rustler",
+            "passenger",
+            "passenger_g",
+            "unoccupied",
+            "trailer",
             "jetpack",
             "pickup",
             "death",
@@ -573,6 +882,14 @@ def main() -> int:
     parser.add_argument("--observer-screenshot-label")
     parser.add_argument("--observer-screenshot-count", type=int, default=1)
     parser.add_argument("--observer-screenshot-interval", type=float, default=0.15)
+    parser.add_argument(
+        "--steer-during-capture",
+        choices=["left", "right"],
+        help=(
+            "hold steering together with throttle during car/trailer screenshot "
+            "capture so articulated motion remains in the recorded window"
+        ),
+    )
     parser.add_argument(
         "--active-transition",
         choices=["vehicle", "streamout"],
@@ -626,7 +943,17 @@ def main() -> int:
         )
 
     if args.scenario == "all":
-        scenarios = ["onfoot", "car", "rustler", "jetpack", "pickup", "death"]
+        scenarios = [
+            "onfoot",
+            "car",
+            "rustler",
+            "passenger",
+            "unoccupied",
+            "trailer",
+            "jetpack",
+            "pickup",
+            "death",
+        ]
     elif args.scenario == "combat":
         scenarios = ["pistol", "m4", "sniper"]
     else:
@@ -656,6 +983,7 @@ def main() -> int:
                     screenshot_label,
                     args.observer_screenshot_count,
                     args.observer_screenshot_interval,
+                    args.steer_during_capture,
                     args.active_transition,
                     args.test_cmds_request_path,
                     args.test_cmds_results_path,
@@ -667,15 +995,8 @@ def main() -> int:
                     args.sync_pair_request_timeout,
                 )
                 run_index += 1
-        queue_sync_pair_scenario(
-            "stop",
-            args.sync_pair_request_path,
-            args.sync_pair_results_path,
-            args.sync_pair_request_timeout,
-            output,
-        )
     finally:
-        for vk in (VK_CONTROL, VK_SPACE, VK_W, VK_A, VK_D, VK_S, VK_H):
+        for vk in (VK_CONTROL, VK_SPACE, VK_W, VK_A, VK_D, VK_G, VK_S, VK_H):
             try:
                 client.key(vk, "up")
             except (OSError, RuntimeError):
@@ -685,10 +1006,33 @@ def main() -> int:
             client.command("mouse", action="right_up", x=0, y=0)
         except (OSError, RuntimeError):
             pass
+        try:
+            queue_sync_pair_scenario(
+                "stop",
+                args.sync_pair_request_path,
+                args.sync_pair_results_path,
+                args.sync_pair_request_timeout,
+                output,
+            )
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            cleanup = {
+                "event": "sync_pair_stop_request_failed",
+                "error": str(exc),
+                "fallback": "chat_command",
+                "host_time": time.time(),
+            }
+            output.append(cleanup)
+            print(json.dumps(cleanup, sort_keys=True))
+            try:
+                chat_command(client, "/syncpair stop")
+            except (OSError, RuntimeError) as fallback_exc:
+                cleanup["fallback_error"] = str(fallback_exc)
         client.close()
-
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(output, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return 0
 
 

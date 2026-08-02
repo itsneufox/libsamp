@@ -1,7 +1,7 @@
 param(
     [string]$Root = "C:\samp-test",
     [ValidateSet("key", "click")][string]$Mode = "key",
-    [ValidateSet("ENTER", "ESCAPE", "SPACE", "ALTENTER", "UP", "DOWN", "LEFT", "RIGHT", "FIRE", "GAS", "GASFIRE", "STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN", "MODE", "CLASS", "KILL", "QUIT", "MENUTEST", "TPASSWORD", "TPASSWORDVALUE", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF", "RPCLEGACYRAW", "RPCLEGACYDRUNKON", "RPCLEGACYDRUNKOFF", "SYNCFOOT", "SYNCCAR", "SYNCRUSTLER", "SYNCSTOP")][string]$Key = "ENTER",
+    [ValidateSet("ENTER", "ESCAPE", "SPACE", "ALTENTER", "TAB", "F6", "F7", "UP", "DOWN", "LEFT", "RIGHT", "FIRE", "GAS", "GASFIRE", "PASSENGER", "STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN", "MODE", "CLASS", "KILL", "QUIT", "MENUTEST", "TPASSWORD", "TPASSWORDVALUE", "SFA", "LVA", "AA", "ACTORS", "ACTORSOFF", "RPC175EDGE", "RPC175EDGEOFF", "RPC175RAW", "RPC176RAW", "RPC178EDGE", "RPC178EDGEOFF", "RPCLEGACYRAW", "RPCLEGACYDRUNKON", "RPCLEGACYDRUNKOFF", "SYNCFOOT", "SYNCCAR", "SYNCRUSTLER", "SYNCSTOP")][string]$Key = "ENTER",
     [int]$X = 0,
     [int]$Y = 0,
     [string]$Label = "input"
@@ -103,8 +103,9 @@ if ($Mode -eq "key") {
             [SampTestWindowInput]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
             [SampTestKeyboardInput]::keybd_event(0x57, 0, 0x0002, [UIntPtr]::Zero)
         }
-    } elseif ($Key -in @("STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN")) {
+    } elseif ($Key -in @("PASSENGER", "STEERLEFT", "STEERRIGHT", "BRAKE", "HANDBRAKE", "HORN")) {
         [byte]$virtualKey = switch ($Key) {
+            "PASSENGER" { 0x47 }
             "STEERLEFT" { 0x41 }
             "STEERRIGHT" { 0x44 }
             "BRAKE" { 0x53 }
@@ -113,7 +114,11 @@ if ($Mode -eq "key") {
         }
         [SampTestKeyboardInput]::keybd_event($virtualKey, 0, 0, [UIntPtr]::Zero)
         try {
-            Start-Sleep -Milliseconds 750
+            # STATIC_037:
+            # CLocalPlayer::Process consumes the passenger control on the
+            # first pressed frame. Keep G down across several DirectInput
+            # samples without turning the test into a long held-key repeat.
+            Start-Sleep -Milliseconds $(if ($Key -eq "PASSENGER") { 100 } else { 750 })
         } finally {
             [SampTestKeyboardInput]::keybd_event($virtualKey, 0, 0x0002, [UIntPtr]::Zero)
         }
@@ -133,6 +138,29 @@ if ($Mode -eq "key") {
             Start-Sleep -Milliseconds 50
         } finally {
             [SampTestKeyboardInput]::keybd_event(0x12, 0, 0x0002, [UIntPtr]::Zero)
+        }
+    } elseif ($Key -in @("TAB", "F6", "F7")) {
+        # STATIC_037 + TODO_VERIFY:
+        # The focused R5 UI-latch probe observes the scoreboard, chat-open,
+        # chat-display-cycle and cursor transition callees. Emit a real,
+        # bounded key-down/key-up pair so DirectInput and WndProc both see the
+        # same edge. TAB remains held long enough for a concurrent screenshot
+        # burst to catch the visible scoreboard.
+        [byte]$virtualKey = switch ($Key) {
+            "TAB" { 0x09 }
+            "F6" { 0x75 }
+            "F7" { 0x76 }
+        }
+        [byte]$scanCode = switch ($Key) {
+            "TAB" { 0x0F }
+            "F6" { 0x40 }
+            "F7" { 0x41 }
+        }
+        [SampTestKeyboardInput]::keybd_event($virtualKey, $scanCode, 0, [UIntPtr]::Zero)
+        try {
+            Start-Sleep -Milliseconds $(if ($Key -eq "TAB") { 750 } else { 100 })
+        } finally {
+            [SampTestKeyboardInput]::keybd_event($virtualKey, $scanCode, 0x0002, [UIntPtr]::Zero)
         }
     } elseif ($Key -in @("SPACE", "UP", "DOWN", "LEFT", "RIGHT")) {
         # PROBE_TRACE:

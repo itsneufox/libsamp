@@ -38,6 +38,54 @@ class ResultParsingTests(unittest.TestCase):
         verdict, _warnings = reloop.classify_run([], 1, "", False)
         self.assertEqual(verdict, "PRECONNECT_CRASH")
 
+    def test_preconnect_streaming_timeout_uses_last_open_step(self):
+        client_logs = "\n".join([
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadSceneCollision phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadSceneCollision phase=end evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+        ])
+        verdict, warnings = reloop.classify_run([], 0, client_logs, True)
+        self.assertEqual(verdict, "HANG_PRECONNECT_STREAMING")
+        self.assertIn("reason=preconnect step=LoadScene phase=begin", warnings[0])
+        self.assertIn("Join/NetGame evidence absent", warnings[0])
+
+    def test_spawn_streaming_timeout_requires_join_evidence(self):
+        client_logs = "\n".join([
+            "rpc-auto-out id=25 name=ClientJoin nickname=ReLoop sent=1",
+            "rpc-in id=139 name=ScrInitGame local=implemented count=1",
+            "[sampdll-runtime] scene_prepare_step: reason=spawn "
+            "step=LoadSceneCollision phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=spawn "
+            "step=LoadSceneCollision phase=end evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=spawn "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+        ])
+        verdict, warnings = reloop.classify_run([], 0, client_logs, True)
+        self.assertEqual(verdict, "HANG_SPAWN_STREAMING")
+        self.assertIn("Join/NetGame evidence present", warnings[0])
+
+    def test_closed_streaming_step_is_not_classified_as_hang(self):
+        client_logs = "\n".join([
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=end evidence=PROBE_TRACE",
+        ])
+        verdict, _warnings = reloop.classify_run([], 0, client_logs, True)
+        self.assertEqual(verdict, "PRECONNECT_CRASH")
+
+    def test_exception_marker_takes_precedence_over_open_streaming_step(self):
+        client_logs = "\n".join([
+            "[sampdll-runtime] scene_prepare_step: reason=preconnect "
+            "step=LoadScene phase=begin evidence=PROBE_TRACE",
+            "[sampdll-runtime] exception_filter: code=0xc0000005",
+        ])
+        verdict, _warnings = reloop.classify_run([], 1, client_logs, True)
+        self.assertEqual(verdict, "PRECONNECT_CRASH")
+
     def test_failure_is_state_mismatch(self):
         lines = [
             "[test_cmds] request=1 marker=RUN_START status=ACTION",
@@ -50,7 +98,10 @@ class ResultParsingTests(unittest.TestCase):
     def test_crash_retry_requires_remaining_attempt(self):
         self.assertTrue(reloop.should_retry_crash("PRECONNECT_CRASH", 1, 3))
         self.assertTrue(reloop.should_retry_crash("RUNTIME_CRASH", 2, 3))
+        self.assertTrue(reloop.should_retry_crash("HANG_PRECONNECT_STREAMING", 1, 3))
+        self.assertTrue(reloop.should_retry_crash("HANG_SPAWN_STREAMING", 2, 3))
         self.assertFalse(reloop.should_retry_crash("RUNTIME_CRASH", 3, 3))
+        self.assertFalse(reloop.should_retry_crash("HANG_SPAWN_STREAMING", 3, 3))
         self.assertFalse(reloop.should_retry_crash("STATE_MISMATCH", 1, 3))
 
     def test_retry_wrapper_enforces_three_attempt_minimum(self):
@@ -99,6 +150,45 @@ class SnapshotTests(unittest.TestCase):
                 handle.write("new\n")
             self.assertEqual(snapshot.capture_append(destination), 4)
             self.assertEqual(destination.read_text(encoding="utf-8"), "new\n")
+
+
+class MetadataTests(unittest.TestCase):
+    def test_metadata_hashes_match_deployed_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / "prefix"
+            profile = reloop.ClientProfile("replacement", prefix, None, None)
+            profile.gta_root.mkdir(parents=True)
+            profile.samp_dll.write_bytes(b"previous dll")
+            previous_hash = reloop.sha256(profile.samp_dll)
+
+            built_dll = root / "build" / "samp.dll"
+            built_dll.parent.mkdir()
+            built_dll.write_bytes(b"current dll")
+            pawn_output = root / "test_cmds.amx"
+            pawn_output.write_bytes(b"current pawn")
+            settings = type("SettingsStub", (), {
+                "built_dll": built_dll,
+                "pawn_output": pawn_output,
+                "clients": {"replacement": profile},
+            })()
+            artifact_dir = root / "artifact"
+            metadata = {
+                "dll_sha256": previous_hash,
+                "built_dll_sha256": "stale-build-hash",
+                "pawn_sha256": "stale-pawn-hash",
+            }
+
+            deploy = reloop.deploy_replacement(settings, artifact_dir / "build")
+            reloop.write_run_metadata(artifact_dir, metadata, settings, profile)
+
+            persisted = __import__("json").loads(
+                (artifact_dir / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(persisted["dll_sha256"], deploy["installed_sha256"])
+            self.assertEqual(persisted["dll_sha256"], persisted["built_dll_sha256"])
+            self.assertEqual(persisted["pawn_sha256"], reloop.sha256(pawn_output))
+            self.assertNotEqual(persisted["dll_sha256"], previous_hash)
 
 
 class ComparisonTests(unittest.TestCase):

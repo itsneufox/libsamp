@@ -10,6 +10,15 @@
 #define CONTROL_TOKEN "reloop-local-v1"
 #define MAX_COMMAND 2048
 
+#define SAMP_R5_PREFERRED_BASE 0x10000000u
+#define SAMP_R5_TIMESTAMP 0x6372c39eu
+#define SAMP_R5_ENTRY_RVA 0x000cbc90u
+#define SAMP_R5_IMAGE_SIZE 0x0027e000u
+#define SAMP_R5_SCREENSHOT_ROUTINE_RVA 0x000755c0u
+#define SAMP_R5_RENDER_SCREENSHOT_GUARD_RVA 0x00075751u
+#define SAMP_R5_SCREENSHOT_REQUEST_RVA 0x0012de64u
+#define SAMP_R5_EXCEPTION_HANDLER_RVA 0x000e3ac8u
+
 static HANDLE g_stop_event;
 static HANDLE g_thread;
 static HMODULE g_module;
@@ -46,6 +55,95 @@ static int readable(uintptr_t address, size_t size) {
   return end <= (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
 }
 
+static int writable(uintptr_t address, size_t size) {
+  MEMORY_BASIC_INFORMATION mbi;
+  uintptr_t end;
+  DWORD protection;
+  if (address == 0 || size == 0 || address > UINTPTR_MAX - size) return 0;
+  if (VirtualQuery((const void *)address, &mbi, sizeof(mbi)) != sizeof(mbi)) return 0;
+  end = address + size;
+  protection = mbi.Protect & 0xffu;
+  if (mbi.State != MEM_COMMIT || (mbi.Protect & PAGE_GUARD) != 0 ||
+      end > (uintptr_t)mbi.BaseAddress + mbi.RegionSize) {
+    return 0;
+  }
+  return protection == PAGE_READWRITE || protection == PAGE_WRITECOPY ||
+         protection == PAGE_EXECUTE_READWRITE ||
+         protection == PAGE_EXECUTE_WRITECOPY;
+}
+
+static int request_samp_r5_screenshot(void) {
+  uint8_t screenshot_routine_guard[] = {
+      0x6a, 0xff, 0x68, 0xc8, 0x3a, 0x0e, 0x10, 0x64,
+      0xa1, 0x00, 0x00, 0x00, 0x00, 0x50, 0x64, 0x89,
+  };
+  uint8_t render_request_guard[] = {
+      0xa1, 0x64, 0xde, 0x12, 0x10, 0x85, 0xc0, 0x53, 0x56,
+      0x57, 0x74, 0x05, 0xe8, 0x5e, 0xfe, 0xff, 0xff,
+  };
+  HMODULE module = GetModuleHandleA("samp.dll");
+  uintptr_t base = (uintptr_t)module;
+  uint32_t relocated_exception_handler;
+  uint32_t relocated_request;
+  const IMAGE_DOS_HEADER *dos;
+  const IMAGE_NT_HEADERS32 *nt;
+  volatile LONG *request;
+  if (module == NULL || base > UINT32_MAX - SAMP_R5_IMAGE_SIZE ||
+      !readable(base, sizeof(IMAGE_DOS_HEADER))) {
+    return 0;
+  }
+  dos = (const IMAGE_DOS_HEADER *)base;
+  if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0x40 ||
+      dos->e_lfanew > 0x1000 ||
+      !readable(base + (uintptr_t)dos->e_lfanew, sizeof(IMAGE_NT_HEADERS32))) {
+    return 0;
+  }
+  nt = (const IMAGE_NT_HEADERS32 *)(base + (uintptr_t)dos->e_lfanew);
+  if (nt->Signature != IMAGE_NT_SIGNATURE ||
+      nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 ||
+      nt->FileHeader.TimeDateStamp != SAMP_R5_TIMESTAMP ||
+      nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC ||
+      nt->OptionalHeader.ImageBase != SAMP_R5_PREFERRED_BASE ||
+      nt->OptionalHeader.AddressOfEntryPoint != SAMP_R5_ENTRY_RVA ||
+      nt->OptionalHeader.SizeOfImage != SAMP_R5_IMAGE_SIZE) {
+    return 0;
+  }
+
+  /*
+   * STATIC_037: both original guard windows contain normal PE HIGHLOW
+   * relocations. Compare their exact post-loader form so Wine/ASLR mappings
+   * remain accepted without weakening the byte guard.
+   */
+  relocated_exception_handler =
+      (uint32_t)(base + SAMP_R5_EXCEPTION_HANDLER_RVA);
+  relocated_request = (uint32_t)(base + SAMP_R5_SCREENSHOT_REQUEST_RVA);
+  memcpy(screenshot_routine_guard + 3, &relocated_exception_handler,
+         sizeof(relocated_exception_handler));
+  memcpy(render_request_guard + 1, &relocated_request,
+         sizeof(relocated_request));
+  if (
+      !readable(base + SAMP_R5_SCREENSHOT_ROUTINE_RVA,
+                sizeof(screenshot_routine_guard)) ||
+      memcmp((const void *)(base + SAMP_R5_SCREENSHOT_ROUTINE_RVA),
+             screenshot_routine_guard, sizeof(screenshot_routine_guard)) != 0 ||
+      !readable(base + SAMP_R5_RENDER_SCREENSHOT_GUARD_RVA,
+                sizeof(render_request_guard)) ||
+      memcmp((const void *)(base + SAMP_R5_RENDER_SCREENSHOT_GUARD_RVA),
+             render_request_guard, sizeof(render_request_guard)) != 0 ||
+      !writable(base + SAMP_R5_SCREENSHOT_REQUEST_RVA, sizeof(LONG))) {
+    return 0;
+  }
+  request = (volatile LONG *)(base + SAMP_R5_SCREENSHOT_REQUEST_RVA);
+  InterlockedExchange(request, 1);
+  log_line(
+      "samp_screenshot=requested flag=samp.dll+0x12de64 "
+      "renderer=samp.dll+0x75730 routine=samp.dll+0x755c0 "
+      "guard=relocation-normalized "
+      "sha256=b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2 "
+      "evidence=STATIC_037");
+  return 1;
+}
+
 static unsigned read_u8(uintptr_t address, unsigned fallback) {
   return readable(address, 1) ? *(const volatile uint8_t *)address : fallback;
 }
@@ -58,14 +156,26 @@ static float read_f32(uintptr_t address) {
   return readable(address, sizeof(float)) ? *(const volatile float *)address : 0.0f;
 }
 
-static int read_player_position(float *x, float *y, float *z) {
+static int read_player_transform(float *x, float *y, float *z,
+                                 float *forward_x, float *forward_y,
+                                 float *forward_z) {
   uintptr_t ped;
   uintptr_t matrix;
   if (!readable(0x00B7CD98u, sizeof(uintptr_t))) return 0;
   ped = *(const volatile uintptr_t *)0x00B7CD98u;
   if (!readable(ped + 0x14u, sizeof(uintptr_t))) return 0;
   matrix = *(const volatile uintptr_t *)(ped + 0x14u);
-  if (!readable(matrix + 0x30u, 3u * sizeof(float))) return 0;
+  /*
+   * GTA_REVERSED_REF: CMatrix stores forward at +0x10 and position at +0x30.
+   * The same layout is already used by the project's passive ASI probes.
+   */
+  if (!readable(matrix + 0x10u, 3u * sizeof(float)) ||
+      !readable(matrix + 0x30u, 3u * sizeof(float))) {
+    return 0;
+  }
+  *forward_x = *(const volatile float *)(matrix + 0x10u);
+  *forward_y = *(const volatile float *)(matrix + 0x14u);
+  *forward_z = *(const volatile float *)(matrix + 0x18u);
   *x = *(const volatile float *)(matrix + 0x30u);
   *y = *(const volatile float *)(matrix + 0x34u);
   *z = *(const volatile float *)(matrix + 0x38u);
@@ -115,7 +225,7 @@ static void send_json(SOCKET client, const char *text) {
 }
 
 static void send_state(SOCKET client) {
-  char response[1024];
+  char response[1536];
   char input_bytes[16] = "unreadable";
   HWND hwnd = game_window();
   RECT rect = {0};
@@ -123,7 +233,12 @@ static void send_state(SOCKET client) {
   CURSORINFO cursor_info;
   unsigned char *input = (unsigned char *)(uintptr_t)0x00541DF5u;
   float player_x = 0.0f, player_y = 0.0f, player_z = 0.0f;
-  int player_position_valid = read_player_position(&player_x, &player_y, &player_z);
+  float player_forward_x = 0.0f, player_forward_y = 0.0f;
+  float player_forward_z = 0.0f;
+  int player_transform_valid =
+      read_player_transform(&player_x, &player_y, &player_z,
+                            &player_forward_x, &player_forward_y,
+                            &player_forward_z);
   memset(&cursor_info, 0, sizeof(cursor_info));
   cursor_info.cbSize = sizeof(cursor_info);
   GetClientRect(hwnd, &rect);
@@ -139,17 +254,24 @@ static void send_state(SOCKET client) {
            "\"client_w\":%ld,\"client_h\":%ld,\"cursor_x\":%ld,\"cursor_y\":%ld,"
            "\"cursor_showing\":%s,"
            "\"hud\":%u,\"radar_blank\":%u,\"camera_mode\":%u,\"camera_mode2\":%u,"
-           "\"camera_use_mouse\":%u,\"aim_x\":%.6f,\"aim_y\":%.6f,\"aim_z\":%.6f,"
+           "\"camera_use_mouse\":%u,"
+           "\"aim_front_x\":%.6f,\"aim_front_y\":%.6f,\"aim_front_z\":%.6f,"
+           "\"aim_x\":%.6f,\"aim_y\":%.6f,\"aim_z\":%.6f,"
            "\"player_position_valid\":%s,\"player_x\":%.6f,\"player_y\":%.6f,\"player_z\":%.6f,"
+           "\"player_forward_x\":%.6f,\"player_forward_y\":%.6f,\"player_forward_z\":%.6f,"
            "\"tab_down\":%s,\"t_down\":%s,\"w_down\":%s,\"input_call\":\"%s\"}",
            (unsigned long)(uintptr_t)hwnd, GetForegroundWindow() == hwnd ? "true" : "false",
            rect.right - rect.left, rect.bottom - rect.top, cursor.x, cursor.y,
            (cursor_info.flags & CURSOR_SHOWING) != 0 ? "true" : "false",
            read_u8(0x00BA6769u, 255), read_u8(0x00BAA3FBu, 255),
            read_u8(0x00B6F1A8u, 255), read_u16(0x00B6F858u, 65535),
-           read_u8(0x00B6EC2Eu, 255), read_f32(0x00B6F338u),
+           read_u8(0x00B6EC2Eu, 255),
+           read_f32(0x00B6F32Cu), read_f32(0x00B6F330u),
+           read_f32(0x00B6F334u), read_f32(0x00B6F338u),
            read_f32(0x00B6F33Cu), read_f32(0x00B6F340u),
-           player_position_valid ? "true" : "false", player_x, player_y, player_z,
+           player_transform_valid ? "true" : "false",
+           player_x, player_y, player_z,
+           player_forward_x, player_forward_y, player_forward_z,
            (GetAsyncKeyState(VK_TAB) & 0x8000) ? "true" : "false",
            (GetAsyncKeyState('T') & 0x8000) ? "true" : "false",
            (GetAsyncKeyState('W') & 0x8000) ? "true" : "false", input_bytes);
@@ -162,9 +284,20 @@ static void post_key(HWND hwnd, int vk, int down) {
   keybd_event((BYTE)vk, (BYTE)scan, down ? 0 : KEYEVENTF_KEYUP, 0);
 }
 
-static void post_mouse(HWND hwnd, int x, int y, const char *action) {
+static int post_mouse(HWND hwnd, int x, int y, const char *action) {
   POINT screen = {x, y};
   LPARAM point = MAKELPARAM((short)x, (short)y);
+  if (strcmp(action, "move_delta") == 0) {
+    INPUT input;
+    if (x < -2048 || x > 2048 || y < -2048 || y > 2048) return 0;
+    memset(&input, 0, sizeof(input));
+    input.type = INPUT_MOUSE;
+    input.mi.dx = (LONG)x;
+    input.mi.dy = (LONG)y;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE;
+    return SendInput(1, &input, sizeof(input)) == 1;
+  }
+
   ClientToScreen(hwnd, &screen);
   SetCursorPos(screen.x, screen.y);
   PostMessageA(hwnd, WM_MOUSEMOVE, 0, point);
@@ -191,9 +324,8 @@ static void post_mouse(HWND hwnd, int x, int y, const char *action) {
     PostMessageA(hwnd, WM_RBUTTONUP, 0, point);
     PostMessageA(hwnd, WM_LBUTTONDBLCLK, MK_LBUTTON, point);
     PostMessageA(hwnd, WM_LBUTTONUP, 0, point);
-  } else if (strcmp(action, "move_delta") == 0) {
-    SetCursorPos(screen.x + x, screen.y + y);
   }
+  return 1;
 }
 
 static void handle_command(SOCKET client, const char *line) {
@@ -243,10 +375,23 @@ static void handle_command(SOCKET client, const char *line) {
     int code = json_int(line, "code", 0);
     PostMessageA(hwnd, WM_CHAR, (WPARAM)code, 1);
     send_json(client, "{\"ok\":true,\"event\":\"char\"}");
+  } else if (strcmp(command, "samp_screenshot") == 0) {
+    if (request_samp_r5_screenshot()) {
+      send_json(client,
+                "{\"ok\":true,\"event\":\"samp_screenshot\","
+                "\"identity\":\"original_r5\","
+                "\"request_flag_rva\":\"0x0012de64\"}");
+    } else {
+      send_json(client,
+                "{\"ok\":false,\"error\":\"unsupported_samp_identity\"}");
+    }
   } else if (strcmp(command, "mouse") == 0) {
     if (!json_string(line, "action", action, sizeof(action))) strcpy(action, "move");
-    post_mouse(hwnd, json_int(line, "x", 0), json_int(line, "y", 0), action);
-    send_json(client, "{\"ok\":true,\"event\":\"mouse\"}");
+    if (post_mouse(hwnd, json_int(line, "x", 0), json_int(line, "y", 0), action)) {
+      send_json(client, "{\"ok\":true,\"event\":\"mouse\"}");
+    } else {
+      send_json(client, "{\"ok\":false,\"error\":\"mouse_injection_failed\"}");
+    }
   } else {
     send_json(client, "{\"ok\":false,\"error\":\"unknown_cmd\"}");
   }

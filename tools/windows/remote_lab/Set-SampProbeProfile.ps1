@@ -12,7 +12,13 @@ param(
         "actor",
         "actor-heavy",
         "rpc-gap",
-        "dialog-menu"
+        "dialog-menu",
+        "trailer-r5",
+        "vehicle-lifecycle",
+        "aim-bullet-jetpack",
+        "death-cleanup",
+        "pickup-r5",
+        "ui-latches-r5"
     )]
     [string]$Profile = "passive"
 )
@@ -49,7 +55,14 @@ $knownFlags = @(
     "samp_probe_actor_hooks.flag",
     "samp_probe_actor_heavy.flag",
     "samp_probe_rpc_gap_hooks.flag",
-    "samp_probe_dialog_menu_rpc_hooks.flag"
+    "samp_probe_dialog_menu_rpc_hooks.flag",
+    "samp_probe_trailer_sync_hooks.flag",
+    "samp_probe_trailer_physics_hooks.flag",
+    "samp_probe_vehicle_lifecycle_hooks.flag",
+    "samp_probe_aim_bullet_jetpack_hooks.flag",
+    "samp_probe_death_cleanup_hooks.flag",
+    "samp_probe_pickup_hooks.flag",
+    "samp_probe_ui_latches_hooks.flag"
 )
 
 $profileFlags = @{
@@ -68,6 +81,25 @@ $profileFlags = @{
     "actor-heavy" = @("samp_probe_actor_heavy.flag")
     "rpc-gap" = @("samp_probe_rpc_gap_hooks.flag")
     "dialog-menu" = @("samp_probe_dialog_menu_rpc_hooks.flag")
+    "trailer-r5" = @(
+        "samp_probe_trailer_sync_hooks.flag",
+        "samp_probe_trailer_physics_hooks.flag"
+    )
+    "vehicle-lifecycle" = @(
+        "samp_probe_vehicle_lifecycle_hooks.flag"
+    )
+    "aim-bullet-jetpack" = @(
+        "samp_probe_aim_bullet_jetpack_hooks.flag"
+    )
+    "death-cleanup" = @(
+        "samp_probe_death_cleanup_hooks.flag"
+    )
+    "pickup-r5" = @(
+        "samp_probe_pickup_hooks.flag"
+    )
+    "ui-latches-r5" = @(
+        "samp_probe_ui_latches_hooks.flag"
+    )
 }
 
 $removed = @()

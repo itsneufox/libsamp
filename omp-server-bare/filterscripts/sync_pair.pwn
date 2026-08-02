@@ -10,6 +10,8 @@
 #define SYNC_PAIR_SAMPLE_MS        (250)
 #define SYNC_PAIR_HEARTBEAT_MS     (1000)
 #define SYNC_PAIR_REQUEST_POLL_MS  (250)
+#define SYNC_PAIR_EDGE_STREAM_RETRY_LIMIT (40)
+#define SYNC_PAIR_AUTOSPAWN_RETRY_LIMIT (12)
 #define SYNC_PAIR_REQUEST_FILE     ("sync_pair_request.txt")
 #define SYNC_PAIR_RESULT_FILE      ("sync_pair_results.log")
 
@@ -17,6 +19,7 @@
 #define SYNC_PAIR_Y                (1885.0)
 #define SYNC_PAIR_Z                (17.65)
 #define SYNC_PAIR_TARGET_DISTANCE  (25.0)
+#define SYNC_PAIR_PASSENGER_G_X_OFFSET (2.4)
 
 enum E_SYNC_PAIR_SCENARIO
 {
@@ -24,9 +27,13 @@ enum E_SYNC_PAIR_SCENARIO
     SYNC_PAIR_ONFOOT,
     SYNC_PAIR_CAR,
     SYNC_PAIR_RUSTLER,
+    SYNC_PAIR_PASSENGER,
+    SYNC_PAIR_UNOCCUPIED,
+    SYNC_PAIR_TRAILER,
     SYNC_PAIR_JETPACK,
     SYNC_PAIR_PICKUP,
-    SYNC_PAIR_DEATH
+    SYNC_PAIR_DEATH,
+    SYNC_PAIR_PASSENGER_G
 };
 
 static gSyncPilot = INVALID_PLAYER_ID;
@@ -35,6 +42,7 @@ static bool:gSyncSpawned[MAX_PLAYERS];
 static E_SYNC_PAIR_SCENARIO:gSyncScenario;
 static gSyncVehicle = INVALID_VEHICLE_ID;
 static gSyncTargetVehicle = INVALID_VEHICLE_ID;
+static gSyncTrailer = INVALID_VEHICLE_ID;
 static gSyncPickup = -1;
 static WEAPON:gSyncWeapon = WEAPON_FIST;
 static gSyncLastSampleTick;
@@ -45,12 +53,22 @@ static gSyncLastLeftRight;
 static PLAYER_STATE:gSyncLastState = PLAYER_STATE_NONE;
 static gSyncUpdateCount;
 static gSyncShotCount;
+static gSyncUnoccupiedUpdateCount;
+static gSyncTrailerUpdateCount;
 static gSyncActiveRequestId;
 static gSyncRequestTimer;
+static bool:gSyncPairReadyAnnounced;
+static bool:gSyncPassengerEnterSeen;
+static gSyncPassengerEnterVehicle = INVALID_VEHICLE_ID;
+static gSyncPassengerEnterIsPassenger = -1;
+static bool:gSyncPassengerResultEmitted;
 
-forward SyncPairAutoSpawn(playerid);
+forward SyncPairAutoSpawn(playerid, attempt);
 forward SyncPairPollRequest();
 forward SyncPairRestorePilotWorld();
+forward SyncPairFinalizeEdgeSetup(expectedScenario, vehicleid, trailerid, attempt);
+forward SyncPairVerifyEdgeSetup(expectedScenario, vehicleid, trailerid, attempt);
+forward SyncPairVerifyPassengerEntry(vehicleid, requestId, attempt);
 
 stock SyncPairScenarioName(E_SYNC_PAIR_SCENARIO:scenario, output[], size)
 {
@@ -59,9 +77,13 @@ stock SyncPairScenarioName(E_SYNC_PAIR_SCENARIO:scenario, output[], size)
         case SYNC_PAIR_ONFOOT: format(output, size, "onfoot");
         case SYNC_PAIR_CAR: format(output, size, "car");
         case SYNC_PAIR_RUSTLER: format(output, size, "rustler");
+        case SYNC_PAIR_PASSENGER: format(output, size, "passenger");
+        case SYNC_PAIR_UNOCCUPIED: format(output, size, "unoccupied");
+        case SYNC_PAIR_TRAILER: format(output, size, "trailer");
         case SYNC_PAIR_JETPACK: format(output, size, "jetpack");
         case SYNC_PAIR_PICKUP: format(output, size, "pickup");
         case SYNC_PAIR_DEATH: format(output, size, "death");
+        case SYNC_PAIR_PASSENGER_G: format(output, size, "passenger_g");
         default: format(output, size, "none");
     }
     return 1;
@@ -133,6 +155,10 @@ stock bool:SyncPairScenarioKnown(const scenario[])
         !strcmp(scenario, "sniper", true) ||
         !strcmp(scenario, "car", true) ||
         !strcmp(scenario, "rustler", true) ||
+        !strcmp(scenario, "passenger", true) ||
+        !strcmp(scenario, "passenger_g", true) ||
+        !strcmp(scenario, "unoccupied", true) ||
+        !strcmp(scenario, "trailer", true) ||
         !strcmp(scenario, "jetpack", true) ||
         !strcmp(scenario, "pickup", true) ||
         !strcmp(scenario, "death", true) ||
@@ -150,8 +176,13 @@ stock SyncPairDestroyVehicles()
     {
         DestroyVehicle(gSyncTargetVehicle);
     }
+    if (gSyncTrailer != INVALID_VEHICLE_ID && IsValidVehicle(gSyncTrailer))
+    {
+        DestroyVehicle(gSyncTrailer);
+    }
     gSyncVehicle = INVALID_VEHICLE_ID;
     gSyncTargetVehicle = INVALID_VEHICLE_ID;
+    gSyncTrailer = INVALID_VEHICLE_ID;
     return 1;
 }
 
@@ -165,6 +196,12 @@ stock SyncPairDestroyPickup()
     return 1;
 }
 
+/// Requires both roles to be mutually streamed, not merely spawned.
+/// PROBE_TRACE:
+/// Run 20260727-194645-sync-edge-all-897587 observed the original pilot's
+/// reverse stream-in eleven seconds after the replacement observer spawned.
+/// Starting a vehicle scenario at spawn readiness raced that boundary.
+/// Reference: https://open.mp/docs/scripting/functions/IsPlayerStreamedIn
 stock bool:SyncPairReady()
 {
     return gSyncPilot != INVALID_PLAYER_ID &&
@@ -172,7 +209,23 @@ stock bool:SyncPairReady()
         IsPlayerConnected(gSyncPilot) &&
         IsPlayerConnected(gSyncObserver) &&
         gSyncSpawned[gSyncPilot] &&
-        gSyncSpawned[gSyncObserver];
+        gSyncSpawned[gSyncObserver] &&
+        IsPlayerStreamedIn(gSyncPilot, gSyncObserver) &&
+        IsPlayerStreamedIn(gSyncObserver, gSyncPilot);
+}
+
+stock SyncPairAnnounceReady()
+{
+    if (!SyncPairReady() || gSyncPairReadyAnnounced)
+    {
+        return 0;
+    }
+    gSyncPairReadyAnnounced = true;
+    printf("[sync_pair] marker=PAIR_READY pilot=%d observer=%d",
+        gSyncPilot, gSyncObserver);
+    SendClientMessage(gSyncPilot, 0x66CCFFFF,
+        "[sync_pair] Ready: /syncpair pistol | m4 | sniper | car | rustler | passenger | passenger_g | unoccupied | trailer | jetpack | pickup | death | stop");
+    return 1;
 }
 
 stock bool:SyncPairPilotReady()
@@ -200,6 +253,12 @@ stock SyncPairResetSampling()
     gSyncLastState = PLAYER_STATE_NONE;
     gSyncUpdateCount = 0;
     gSyncShotCount = 0;
+    gSyncUnoccupiedUpdateCount = 0;
+    gSyncTrailerUpdateCount = 0;
+    gSyncPassengerEnterSeen = false;
+    gSyncPassengerEnterVehicle = INVALID_VEHICLE_ID;
+    gSyncPassengerEnterIsPassenger = -1;
+    gSyncPassengerResultEmitted = false;
     return 1;
 }
 
@@ -306,6 +365,71 @@ stock SyncPairBegin(E_SYNC_PAIR_SCENARIO:scenario)
             PutPlayerInVehicle(gSyncPilot, gSyncVehicle, 0);
             if (SyncPairReady()) SyncPairSetObserverCamera(SYNC_PAIR_Z + 2.5);
         }
+        case SYNC_PAIR_PASSENGER:
+        {
+            gSyncWeapon = WEAPON_FIST;
+            gSyncVehicle = CreateVehicle(411, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z + 0.5,
+                180.0, 1, 1, -1);
+            if (SyncPairReady()) SyncPairSetObserverCamera(SYNC_PAIR_Z + 1.5);
+            SetTimerEx("SyncPairFinalizeEdgeSetup", 250, false, "iiii",
+                _:SYNC_PAIR_PASSENGER, gSyncVehicle, INVALID_VEHICLE_ID, 1);
+        }
+        case SYNC_PAIR_PASSENGER_G:
+        {
+            /*
+             * STATIC_037:
+             * R5's passenger-entry scan rejects vehicles at >= 4.0 units.
+             * Model 411 has one unambiguous passenger seat, and the pilot is
+             * placed on its right/east side facing west.  No seating native is
+             * used: the only transition is the client's local G action.
+             */
+            gSyncWeapon = WEAPON_FIST;
+            SetPlayerPos(
+                gSyncPilot,
+                SYNC_PAIR_X + SYNC_PAIR_PASSENGER_G_X_OFFSET,
+                SYNC_PAIR_Y,
+                SYNC_PAIR_Z
+            );
+            SetPlayerFacingAngle(gSyncPilot, 90.0);
+            SetCameraBehindPlayer(gSyncPilot);
+            gSyncVehicle = CreateVehicle(
+                411,
+                SYNC_PAIR_X,
+                SYNC_PAIR_Y,
+                SYNC_PAIR_Z + 0.5,
+                0.0,
+                1,
+                1,
+                -1
+            );
+            if (gSyncVehicle != INVALID_VEHICLE_ID)
+            {
+                SetVehicleHealth(gSyncVehicle, 5000.0);
+            }
+            if (SyncPairReady()) SyncPairSetObserverCamera(SYNC_PAIR_Z + 1.5);
+            SetTimerEx("SyncPairFinalizeEdgeSetup", 250, false, "iiii",
+                _:SYNC_PAIR_PASSENGER_G, gSyncVehicle, INVALID_VEHICLE_ID, 1);
+        }
+        case SYNC_PAIR_UNOCCUPIED:
+        {
+            gSyncWeapon = WEAPON_FIST;
+            gSyncVehicle = CreateVehicle(411, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z + 0.5,
+                180.0, 1, 1, -1);
+            if (SyncPairReady()) SyncPairSetObserverCamera(SYNC_PAIR_Z + 1.5);
+            SetTimerEx("SyncPairFinalizeEdgeSetup", 250, false, "iiii",
+                _:SYNC_PAIR_UNOCCUPIED, gSyncVehicle, INVALID_VEHICLE_ID, 1);
+        }
+        case SYNC_PAIR_TRAILER:
+        {
+            gSyncWeapon = WEAPON_FIST;
+            gSyncVehicle = CreateVehicle(515, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z + 0.5,
+                180.0, 1, 1, -1);
+            gSyncTrailer = CreateVehicle(435, SYNC_PAIR_X, SYNC_PAIR_Y + 8.0,
+                SYNC_PAIR_Z + 0.5, 180.0, 1, 1, -1);
+            if (SyncPairReady()) SyncPairSetObserverCamera(SYNC_PAIR_Z + 2.0);
+            SetTimerEx("SyncPairFinalizeEdgeSetup", 250, false, "iiii",
+                _:SYNC_PAIR_TRAILER, gSyncVehicle, gSyncTrailer, 1);
+        }
         case SYNC_PAIR_JETPACK:
         {
             gSyncWeapon = WEAPON_FIST;
@@ -337,9 +461,9 @@ stock SyncPairBegin(E_SYNC_PAIR_SCENARIO:scenario)
         }
     }
 
-    printf("[sync_pair] marker=SCENARIO_START request=%d scenario=%s pilot=%d observer=%d vehicle=%d target_vehicle=%d weapon=%d",
+    printf("[sync_pair] marker=SCENARIO_START request=%d scenario=%s pilot=%d observer=%d vehicle=%d target_vehicle=%d trailer=%d weapon=%d",
         gSyncActiveRequestId, scenarioName, gSyncPilot, gSyncObserver, gSyncVehicle,
-        gSyncTargetVehicle, _:gSyncWeapon);
+        gSyncTargetVehicle, gSyncTrailer, _:gSyncWeapon);
     SendClientMessage(gSyncPilot, 0x66FF66FF, "[sync_pair] Scenario ready; host input may start.");
     if (SyncPairReady())
     {
@@ -352,9 +476,9 @@ stock SyncPairStop(const reason[])
 {
     new scenarioName[16];
     SyncPairScenarioName(gSyncScenario, scenarioName, sizeof(scenarioName));
-    printf("[sync_pair] marker=SCENARIO_STOP request=%d scenario=%s reason=%s updates=%d shots=%d weapon=%d",
+    printf("[sync_pair] marker=SCENARIO_STOP request=%d scenario=%s reason=%s updates=%d shots=%d unoccupied_updates=%d trailer_updates=%d weapon=%d",
         gSyncActiveRequestId, scenarioName, reason, gSyncUpdateCount, gSyncShotCount,
-        _:gSyncWeapon);
+        gSyncUnoccupiedUpdateCount, gSyncTrailerUpdateCount, _:gSyncWeapon);
     SyncPairDestroyVehicles();
     SyncPairDestroyPickup();
     if (gSyncPilot != INVALID_PLAYER_ID && IsPlayerConnected(gSyncPilot))
@@ -398,10 +522,327 @@ stock SyncPairBeginNamed(const scenario[])
     if (!strcmp(scenario, "sniper", true)) return SyncPairBeginOnFoot(WEAPON_SNIPER);
     if (!strcmp(scenario, "car", true)) return SyncPairBegin(SYNC_PAIR_CAR);
     if (!strcmp(scenario, "rustler", true)) return SyncPairBegin(SYNC_PAIR_RUSTLER);
+    if (!strcmp(scenario, "passenger", true)) return SyncPairBegin(SYNC_PAIR_PASSENGER);
+    if (!strcmp(scenario, "passenger_g", true)) return SyncPairBegin(SYNC_PAIR_PASSENGER_G);
+    if (!strcmp(scenario, "unoccupied", true)) return SyncPairBegin(SYNC_PAIR_UNOCCUPIED);
+    if (!strcmp(scenario, "trailer", true)) return SyncPairBegin(SYNC_PAIR_TRAILER);
     if (!strcmp(scenario, "jetpack", true)) return SyncPairBegin(SYNC_PAIR_JETPACK);
     if (!strcmp(scenario, "pickup", true)) return SyncPairBegin(SYNC_PAIR_PICKUP);
     if (!strcmp(scenario, "death", true)) return SyncPairBegin(SYNC_PAIR_DEATH);
     return 0;
+}
+
+/// Completes edge-state seating/attachment only after the involved vehicles
+/// are streamed to both roles.
+/// References:
+/// https://open.mp/docs/scripting/functions/IsVehicleStreamedIn
+/// https://open.mp/docs/scripting/functions/PutPlayerInVehicle
+/// https://open.mp/docs/scripting/functions/AttachTrailerToVehicle
+/// https://open.mp/docs/scripting/functions/SetVehicleVelocity
+public SyncPairFinalizeEdgeSetup(
+    expectedScenario,
+    vehicleid,
+    trailerid,
+    attempt
+)
+{
+    new scenarioName[16];
+    new detail[160];
+
+    if (_:gSyncScenario != expectedScenario ||
+        gSyncVehicle != vehicleid ||
+        !SyncPairReady() ||
+        !IsValidVehicle(vehicleid))
+    {
+        SyncPairScenarioName(E_SYNC_PAIR_SCENARIO:expectedScenario,
+            scenarioName, sizeof(scenarioName));
+        format(detail, sizeof(detail),
+            "context_lost vehicle=%d trailer=%d attempt=%d",
+            vehicleid, trailerid, attempt);
+        SyncPairEmitRequestMarker(
+            "EDGE_SETUP",
+            gSyncActiveRequestId,
+            "FAIL",
+            scenarioName,
+            detail
+        );
+        return 0;
+    }
+
+    new bool:pilotVehicleStreamed =
+        IsVehicleStreamedIn(vehicleid, gSyncPilot);
+    new bool:observerVehicleStreamed =
+        IsVehicleStreamedIn(vehicleid, gSyncObserver);
+    new bool:pilotTrailerStreamed = true;
+    new bool:observerTrailerStreamed = true;
+    new bool:streamed =
+        pilotVehicleStreamed && observerVehicleStreamed;
+    if (expectedScenario == _:SYNC_PAIR_TRAILER)
+    {
+        pilotTrailerStreamed =
+            IsVehicleStreamedIn(trailerid, gSyncPilot);
+        observerTrailerStreamed =
+            IsVehicleStreamedIn(trailerid, gSyncObserver);
+        streamed = streamed &&
+            gSyncTrailer == trailerid &&
+            IsValidVehicle(trailerid) &&
+            pilotTrailerStreamed &&
+            observerTrailerStreamed;
+    }
+    if (!streamed)
+    {
+        if (attempt < SYNC_PAIR_EDGE_STREAM_RETRY_LIMIT)
+        {
+            SetTimerEx("SyncPairFinalizeEdgeSetup", 250, false, "iiii",
+                expectedScenario, vehicleid, trailerid, attempt + 1);
+        }
+        else
+        {
+            printf("[sync_pair] marker=EDGE_SETUP status=FAIL scenario=%d vehicle=%d trailer=%d reason=stream_timeout pilot_vehicle=%d observer_vehicle=%d pilot_trailer=%d observer_trailer=%d",
+                expectedScenario, vehicleid, trailerid, pilotVehicleStreamed,
+                observerVehicleStreamed, pilotTrailerStreamed,
+                observerTrailerStreamed);
+            SyncPairScenarioName(gSyncScenario, scenarioName, sizeof(scenarioName));
+            format(detail, sizeof(detail),
+                "stream_timeout vehicle=%d trailer=%d attempts=%d pilot_vehicle=%d observer_vehicle=%d pilot_trailer=%d observer_trailer=%d",
+                vehicleid, trailerid, attempt, pilotVehicleStreamed,
+                observerVehicleStreamed, pilotTrailerStreamed,
+                observerTrailerStreamed);
+            SyncPairEmitRequestMarker(
+                "EDGE_SETUP",
+                gSyncActiveRequestId,
+                "FAIL",
+                scenarioName,
+                detail
+            );
+        }
+        return 0;
+    }
+
+    if (expectedScenario == _:SYNC_PAIR_PASSENGER_G)
+    {
+        new PLAYER_STATE:actualState = GetPlayerState(gSyncPilot);
+        new actualVehicle = GetPlayerVehicleID(gSyncPilot);
+        new actualSeat = GetPlayerVehicleSeat(gSyncPilot);
+        new Float:distance = GetPlayerDistanceFromPoint(
+            gSyncPilot,
+            SYNC_PAIR_X,
+            SYNC_PAIR_Y,
+            SYNC_PAIR_Z + 0.5
+        );
+        new bool:ready =
+            actualState == PLAYER_STATE_ONFOOT &&
+            actualVehicle == 0 &&
+            distance < 4.0;
+
+        if (!ready && attempt < SYNC_PAIR_EDGE_STREAM_RETRY_LIMIT)
+        {
+            SetTimerEx("SyncPairFinalizeEdgeSetup", 250, false, "iiii",
+                expectedScenario, vehicleid, trailerid, attempt + 1);
+            return 0;
+        }
+
+        SyncPairScenarioName(gSyncScenario, scenarioName, sizeof(scenarioName));
+        format(detail, sizeof(detail),
+            "vehicle=%d state=%d seat=%d distance=%.3f action=vk_g attempts=%d",
+            vehicleid, _:actualState, actualSeat, distance, attempt);
+        SyncPairEmitRequestMarker(
+            "EDGE_SETUP",
+            gSyncActiveRequestId,
+            ready ? "PASS" : "FAIL",
+            scenarioName,
+            detail
+        );
+        return ready;
+    }
+
+    new bool:putResult;
+    new bool:velocityResult = true;
+    new bool:attachResult = true;
+    if (expectedScenario == _:SYNC_PAIR_PASSENGER ||
+        expectedScenario == _:SYNC_PAIR_UNOCCUPIED)
+    {
+        putResult = PutPlayerInVehicle(gSyncPilot, vehicleid, 1);
+        if (putResult && expectedScenario == _:SYNC_PAIR_UNOCCUPIED)
+        {
+            /*
+             * STATIC_037 + OPENMP_REF + TODO_VERIFY:
+             * A driverless but moving vehicle with the pilot as its first
+             * player passenger exercises Packet 209 authority. The official
+             * SetVehicleVelocity note requires an occupied vehicle; seating
+             * therefore deliberately precedes velocity.
+             */
+            velocityResult =
+                SetVehicleVelocity(vehicleid, 0.0, 0.16, 0.0);
+        }
+    }
+    else if (expectedScenario == _:SYNC_PAIR_TRAILER)
+    {
+        attachResult = AttachTrailerToVehicle(trailerid, vehicleid);
+        putResult = PutPlayerInVehicle(gSyncPilot, vehicleid, 0);
+    }
+
+    if (!putResult || !velocityResult || !attachResult)
+    {
+        printf("[sync_pair] marker=EDGE_SETUP status=FAIL scenario=%d vehicle=%d trailer=%d attempts=%d put=%d velocity=%d attach=%d",
+            expectedScenario, vehicleid, trailerid, attempt, putResult,
+            velocityResult, attachResult);
+        SyncPairScenarioName(gSyncScenario, scenarioName, sizeof(scenarioName));
+        format(detail, sizeof(detail),
+            "native_failed vehicle=%d put=%d velocity=%d attach=%d",
+            vehicleid, putResult, velocityResult, attachResult);
+        SyncPairEmitRequestMarker(
+            "EDGE_SETUP",
+            gSyncActiveRequestId,
+            "FAIL",
+            scenarioName,
+            detail
+        );
+        return 0;
+    }
+
+    SetTimerEx("SyncPairVerifyEdgeSetup", 250, false, "iiii",
+        expectedScenario, vehicleid, trailerid, 1);
+    return 1;
+}
+
+/// Verifies the actual seat/state and trailer relationship after the setup
+/// natives have had a server tick to take effect.
+/// References:
+/// https://open.mp/docs/scripting/functions/GetPlayerVehicleID
+/// https://open.mp/docs/scripting/functions/GetPlayerVehicleSeat
+/// https://open.mp/docs/scripting/functions/GetPlayerState
+/// https://open.mp/docs/scripting/functions/GetVehicleTrailer
+public SyncPairVerifyEdgeSetup(
+    expectedScenario,
+    vehicleid,
+    trailerid,
+    attempt
+)
+{
+    new scenarioName[16];
+    new detail[128];
+    new actualVehicle;
+    new actualSeat;
+    new actualTrailer;
+    new PLAYER_STATE:actualState;
+    new bool:verified;
+
+    SyncPairScenarioName(E_SYNC_PAIR_SCENARIO:expectedScenario,
+        scenarioName, sizeof(scenarioName));
+    if (_:gSyncScenario != expectedScenario ||
+        gSyncVehicle != vehicleid ||
+        !SyncPairReady() ||
+        !IsValidVehicle(vehicleid))
+    {
+        format(detail, sizeof(detail),
+            "verify_context_lost vehicle=%d trailer=%d attempt=%d",
+            vehicleid, trailerid, attempt);
+        SyncPairEmitRequestMarker(
+            "EDGE_SETUP",
+            gSyncActiveRequestId,
+            "FAIL",
+            scenarioName,
+            detail
+        );
+        return 0;
+    }
+
+    actualVehicle = GetPlayerVehicleID(gSyncPilot);
+    actualSeat = GetPlayerVehicleSeat(gSyncPilot);
+    actualState = GetPlayerState(gSyncPilot);
+    if (expectedScenario == _:SYNC_PAIR_TRAILER)
+    {
+        actualTrailer = GetVehicleTrailer(vehicleid);
+        verified =
+            actualVehicle == vehicleid &&
+            actualSeat == 0 &&
+            actualState == PLAYER_STATE_DRIVER &&
+            actualTrailer == trailerid;
+    }
+    else
+    {
+        verified =
+            actualVehicle == vehicleid &&
+            actualSeat == 1 &&
+            actualState == PLAYER_STATE_PASSENGER;
+    }
+
+    if (!verified && attempt < 12)
+    {
+        SetTimerEx("SyncPairVerifyEdgeSetup", 250, false, "iiii",
+            expectedScenario, vehicleid, trailerid, attempt + 1);
+        return 0;
+    }
+
+    printf("[sync_pair] marker=EDGE_SETUP status=%s scenario=%d vehicle=%d trailer=%d verify_attempt=%d actual_vehicle=%d actual_seat=%d actual_state=%d actual_trailer=%d",
+        verified ? "PASS" : "FAIL", expectedScenario, vehicleid, trailerid,
+        attempt, actualVehicle, actualSeat, _:actualState, actualTrailer);
+    format(detail, sizeof(detail),
+        "vehicle=%d seat=%d state=%d trailer=%d verify_attempt=%d",
+        actualVehicle, actualSeat, _:actualState, actualTrailer, attempt);
+    SyncPairEmitRequestMarker(
+        "EDGE_SETUP",
+        gSyncActiveRequestId,
+        verified ? "PASS" : "FAIL",
+        scenarioName,
+        detail
+    );
+    return verified;
+}
+
+/// Verifies that a client-originated passenger request completed physically.
+/// The server callback records the request edge, while state/vehicle/seat prove
+/// the later PassengerSync state instead of treating entry animation as success.
+/// References:
+/// https://open.mp/docs/scripting/callbacks/OnPlayerEnterVehicle
+/// https://open.mp/docs/scripting/callbacks/OnPlayerStateChange
+/// https://open.mp/docs/scripting/functions/GetPlayerVehicleID
+/// https://open.mp/docs/scripting/functions/GetPlayerVehicleSeat
+public SyncPairVerifyPassengerEntry(vehicleid, requestId, attempt)
+{
+    if (gSyncScenario != SYNC_PAIR_PASSENGER_G ||
+        gSyncVehicle != vehicleid ||
+        gSyncActiveRequestId != requestId ||
+        gSyncPassengerResultEmitted ||
+        !IsPlayerConnected(gSyncPilot))
+    {
+        return 0;
+    }
+
+    new actualVehicle = GetPlayerVehicleID(gSyncPilot);
+    new actualSeat = GetPlayerVehicleSeat(gSyncPilot);
+    new PLAYER_STATE:actualState = GetPlayerState(gSyncPilot);
+    new bool:verified =
+        gSyncPassengerEnterSeen &&
+        gSyncPassengerEnterVehicle == vehicleid &&
+        gSyncPassengerEnterIsPassenger == 1 &&
+        actualVehicle == vehicleid &&
+        actualSeat == 1 &&
+        actualState == PLAYER_STATE_PASSENGER;
+
+    if (!verified && attempt < 20)
+    {
+        SetTimerEx("SyncPairVerifyPassengerEntry", 250, false, "iii",
+            vehicleid, requestId, attempt + 1);
+        return 0;
+    }
+
+    new detail[160];
+    format(detail, sizeof(detail),
+        "rpc=26 enter_seen=%d enter_vehicle=%d is_passenger=%d vehicle=%d seat=%d state=%d verify_attempt=%d",
+        gSyncPassengerEnterSeen, gSyncPassengerEnterVehicle,
+        gSyncPassengerEnterIsPassenger, actualVehicle, actualSeat,
+        _:actualState, attempt);
+    SyncPairEmitRequestMarker(
+        "PASSENGER_ENTRY_RESULT",
+        requestId,
+        verified ? "PASS" : "FAIL",
+        "passenger_g",
+        detail
+    );
+    gSyncPassengerResultEmitted = true;
+    return verified;
 }
 
 /// Loads the isolated two-client fixture.
@@ -426,11 +867,7 @@ public OnFilterScriptInit()
         printf("[sync_pair] marker=ROLE_RECOVERED role=%s player=%d spawned=%d",
             role == 1 ? "pilot" : "observer", playerid, gSyncSpawned[playerid]);
     }
-    if (SyncPairReady())
-    {
-        printf("[sync_pair] marker=PAIR_READY pilot=%d observer=%d",
-            gSyncPilot, gSyncObserver);
-    }
+    SyncPairAnnounceReady();
     return 1;
 }
 
@@ -455,9 +892,10 @@ public OnPlayerConnect(playerid)
     if (role == 1) gSyncPilot = playerid;
     else gSyncObserver = playerid;
     gSyncSpawned[playerid] = false;
+    gSyncPairReadyAnnounced = false;
     printf("[sync_pair] marker=ROLE_CONNECTED role=%s player=%d",
         role == 1 ? "pilot" : "observer", playerid);
-    SetTimerEx("SyncPairAutoSpawn", 1500, false, "i", playerid);
+    SetTimerEx("SyncPairAutoSpawn", 1500, false, "ii", playerid, 1);
     return 1;
 }
 
@@ -470,18 +908,35 @@ public OnPlayerDisconnect(playerid, reason)
         if (playerid == gSyncPilot) gSyncPilot = INVALID_PLAYER_ID;
         if (playerid == gSyncObserver) gSyncObserver = INVALID_PLAYER_ID;
         gSyncSpawned[playerid] = false;
+        gSyncPairReadyAnnounced = false;
     }
     return 1;
 }
 
 /// Forces a fixed test-role spawn without affecting other nicknames.
+/// PROBE_TRACE:
+/// Run 20260727-194906-sync-edge-all-899837 reached InitGame/class selection
+/// after the one-shot 1.5-second SpawnPlayer call and never emitted
+/// OnPlayerSpawn. Retry until the callback confirms the spawn so client load
+/// time is not confused with a compatibility failure.
 /// References: https://open.mp/docs/scripting/functions/SetSpawnInfo and /SpawnPlayer
-public SyncPairAutoSpawn(playerid)
+public SyncPairAutoSpawn(playerid, attempt)
 {
     if (!IsPlayerConnected(playerid) || !SyncPairRole(playerid)) return 0;
+    if (gSyncSpawned[playerid]) return 1;
+
     SetSpawnInfo(playerid, 0, 0, SYNC_PAIR_X, SYNC_PAIR_Y, SYNC_PAIR_Z, 180.0,
         WEAPON_M4, 500, WEAPON_DEAGLE, 100, WEAPON_KNIFE, 1);
-    return SpawnPlayer(playerid);
+    new bool:spawnResult = SpawnPlayer(playerid);
+    printf("[sync_pair] marker=AUTO_SPAWN player=%d attempt=%d result=%d",
+        playerid, attempt, spawnResult);
+    if (!gSyncSpawned[playerid] &&
+        attempt < SYNC_PAIR_AUTOSPAWN_RETRY_LIMIT)
+    {
+        SetTimerEx("SyncPairAutoSpawn", 2000, false, "ii",
+            playerid, attempt + 1);
+    }
+    return spawnResult;
 }
 
 /// Records role readiness after the forced spawn.
@@ -493,12 +948,7 @@ public OnPlayerSpawn(playerid)
     gSyncSpawned[playerid] = true;
     printf("[sync_pair] marker=ROLE_SPAWNED role=%s player=%d",
         role == 1 ? "pilot" : "observer", playerid);
-    if (SyncPairReady())
-    {
-        printf("[sync_pair] marker=PAIR_READY pilot=%d observer=%d", gSyncPilot, gSyncObserver);
-        SendClientMessage(gSyncPilot, 0x66CCFFFF,
-            "[sync_pair] Ready: /syncpair pistol | m4 | sniper | car | rustler | jetpack | pickup | death | stop");
-    }
+    SyncPairAnnounceReady();
     return 1;
 }
 
@@ -513,6 +963,10 @@ public OnPlayerCommandText(playerid, cmdtext[])
         !strcmp(cmdtext, "/syncpair sniper", true) ||
         !strcmp(cmdtext, "/syncpair car", true) ||
         !strcmp(cmdtext, "/syncpair rustler", true) ||
+        !strcmp(cmdtext, "/syncpair passenger", true) ||
+        !strcmp(cmdtext, "/syncpair passenger_g", true) ||
+        !strcmp(cmdtext, "/syncpair unoccupied", true) ||
+        !strcmp(cmdtext, "/syncpair trailer", true) ||
         !strcmp(cmdtext, "/syncpair jetpack", true) ||
         !strcmp(cmdtext, "/syncpair pickup", true) ||
         !strcmp(cmdtext, "/syncpair death", true))
@@ -702,6 +1156,126 @@ public OnPlayerPickUpPickup(playerid, pickupid)
     return 1;
 }
 
+/// Records client-originated Packet 209 while returning 1 so open.mp forwards
+/// the update to other streamed players.
+/// Reference: https://open.mp/docs/scripting/callbacks/OnUnoccupiedVehicleUpdate
+public OnUnoccupiedVehicleUpdate(
+    vehicleid,
+    playerid,
+    passenger_seat,
+    Float:new_x,
+    Float:new_y,
+    Float:new_z,
+    Float:vel_x,
+    Float:vel_y,
+    Float:vel_z
+)
+{
+    if (gSyncScenario == SYNC_PAIR_UNOCCUPIED &&
+        playerid == gSyncPilot &&
+        vehicleid == gSyncVehicle)
+    {
+        new detail[96];
+        gSyncUnoccupiedUpdateCount++;
+        if (gSyncUnoccupiedUpdateCount <= 3 ||
+            (gSyncUnoccupiedUpdateCount % 20) == 0)
+        {
+            printf("[sync_pair] marker=UNOCCUPIED_UPDATE count=%d player=%d vehicle=%d passenger_seat=%d pos=%.3f,%.3f,%.3f vel=%.4f,%.4f,%.4f",
+                gSyncUnoccupiedUpdateCount, playerid, vehicleid, passenger_seat,
+                new_x, new_y, new_z, vel_x, vel_y, vel_z);
+        }
+        if (gSyncUnoccupiedUpdateCount == 1)
+        {
+            format(detail, sizeof(detail),
+                "packet=209 player=%d vehicle=%d passenger_seat=%d",
+                playerid, vehicleid, passenger_seat);
+            SyncPairEmitRequestMarker(
+                "UNOCCUPIED_UPDATE",
+                gSyncActiveRequestId,
+                "PASS",
+                "unoccupied",
+                detail
+            );
+        }
+    }
+    return 1;
+}
+
+/// Records client-originated Packet 210 while returning 1 so open.mp forwards
+/// the trailer update to other streamed players.
+/// Reference: https://open.mp/docs/scripting/callbacks/OnTrailerUpdate
+public OnTrailerUpdate(playerid, vehicleid)
+{
+    if (gSyncScenario == SYNC_PAIR_TRAILER && playerid == gSyncPilot)
+    {
+        if (vehicleid != gSyncTrailer)
+        {
+            printf("[sync_pair] marker=TRAILER_UPDATE_MISMATCH player=%d vehicle=%d expected_trailer=%d",
+                playerid, vehicleid, gSyncTrailer);
+            return 1;
+        }
+        new detail[80];
+        gSyncTrailerUpdateCount++;
+        if (gSyncTrailerUpdateCount <= 3 ||
+            (gSyncTrailerUpdateCount % 20) == 0)
+        {
+            printf("[sync_pair] marker=TRAILER_UPDATE count=%d player=%d vehicle=%d expected_trailer=%d",
+                gSyncTrailerUpdateCount, playerid, vehicleid, gSyncTrailer);
+        }
+        if (gSyncTrailerUpdateCount == 1)
+        {
+            format(detail, sizeof(detail),
+                "packet=210 player=%d vehicle=%d",
+                playerid, vehicleid);
+            SyncPairEmitRequestMarker(
+                "TRAILER_UPDATE",
+                gSyncActiveRequestId,
+                "PASS",
+                "trailer",
+                detail
+            );
+        }
+    }
+    return 1;
+}
+
+/// Records the client-originated passenger-entry request before the ped is
+/// seated. STATIC_037 maps this R5 request to RPC 26; the callback itself is
+/// the server-side semantic receipt, while raw packet capture remains separate.
+/// Reference: https://open.mp/docs/scripting/callbacks/OnPlayerEnterVehicle
+public OnPlayerEnterVehicle(playerid, vehicleid, ispassenger)
+{
+    if (gSyncScenario == SYNC_PAIR_PASSENGER_G && playerid == gSyncPilot)
+    {
+        new bool:firstRequest = !gSyncPassengerEnterSeen;
+        new detail[160];
+        new PLAYER_STATE:actualState = GetPlayerState(playerid);
+        new actualVehicle = GetPlayerVehicleID(playerid);
+        new actualSeat = GetPlayerVehicleSeat(playerid);
+
+        gSyncPassengerEnterSeen = true;
+        gSyncPassengerEnterVehicle = vehicleid;
+        gSyncPassengerEnterIsPassenger = ispassenger;
+        format(detail, sizeof(detail),
+            "rpc=26 vehicle=%d expected_vehicle=%d is_passenger=%d state_before=%d current_vehicle=%d seat_before=%d",
+            vehicleid, gSyncVehicle, ispassenger, _:actualState,
+            actualVehicle, actualSeat);
+        SyncPairEmitRequestMarker(
+            "PASSENGER_ENTER_REQUEST",
+            gSyncActiveRequestId,
+            "ACTION",
+            "passenger_g",
+            detail
+        );
+        if (firstRequest && !gSyncPassengerResultEmitted)
+        {
+            SetTimerEx("SyncPairVerifyPassengerEntry", 250, false, "iii",
+                gSyncVehicle, gSyncActiveRequestId, 1);
+        }
+    }
+    return 1;
+}
+
 /// Records driver/on-foot transitions for packet-path comparison.
 /// Reference: https://open.mp/docs/scripting/callbacks/OnPlayerStateChange
 public OnPlayerStateChange(playerid, PLAYER_STATE:newstate, PLAYER_STATE:oldstate)
@@ -738,6 +1312,7 @@ public OnPlayerStreamIn(playerid, forplayerid)
         (playerid == gSyncObserver && forplayerid == gSyncPilot))
     {
         printf("[sync_pair] marker=STREAM_IN player=%d for=%d", playerid, forplayerid);
+        SyncPairAnnounceReady();
     }
     return 1;
 }
@@ -750,6 +1325,7 @@ public OnPlayerStreamOut(playerid, forplayerid)
         (playerid == gSyncObserver && forplayerid == gSyncPilot))
     {
         printf("[sync_pair] marker=STREAM_OUT player=%d for=%d", playerid, forplayerid);
+        gSyncPairReadyAnnounced = false;
     }
     return 1;
 }

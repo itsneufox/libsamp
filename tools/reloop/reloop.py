@@ -39,10 +39,25 @@ CLIENT_LOG_NAMES = (
 CONTROL_ASI = REPO_ROOT / "build-reloop-control/reloop_control.asi"
 CONTROL_CLIENT = SCRIPT_DIR / "control_client.py"
 PASS_VERDICTS = {"PASS", "PASS_WITH_WARNINGS"}
-CRASH_VERDICTS = {"PRECONNECT_CRASH", "RUNTIME_CRASH"}
+CRASH_VERDICTS = {
+    "PRECONNECT_CRASH",
+    "RUNTIME_CRASH",
+    "HANG_PRECONNECT_STREAMING",
+    "HANG_SPAWN_STREAMING",
+}
 SERVER_READY_PATTERN = re.compile(r"Legacy Network started on port\s+(\d+)")
 RESULT_PATTERN = re.compile(r"\[test_cmds\]\s+(.*)")
 KEY_VALUE_PATTERN = re.compile(r"([a-z_]+)=([^\s]+)")
+SCENE_PREPARE_STEP_PATTERN = re.compile(
+    r"scene_prepare_step:\s+reason=(?P<reason>[^\s]+)\s+"
+    r"step=(?P<step>[^\s]+)\s+phase=(?P<phase>begin|end)\b"
+)
+SPAWN_SCENE_REASONS = {"class_select_player_pos", "server_player_pos", "spawn"}
+NETGAME_JOIN_MARKERS = (
+    "rpc-auto-out id=25 name=ClientJoin",
+    "rpc-in id=139 name=ScrInitGame",
+    "rpc-state id=139 init_game",
+)
 
 
 class ReLoopError(RuntimeError):
@@ -230,6 +245,20 @@ def request_id() -> int:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_run_metadata(
+    artifact_dir: Path,
+    metadata: dict[str, Any],
+    settings: Settings,
+    profile: ClientProfile,
+) -> None:
+    metadata.update({
+        "dll_sha256": sha256(profile.samp_dll),
+        "built_dll_sha256": sha256(settings.built_dll),
+        "pawn_sha256": sha256(settings.pawn_output),
+    })
+    write_json(artifact_dir / "metadata.json", metadata)
 
 
 def append_event(path: Path, state: str, **details: Any) -> None:
@@ -658,6 +687,31 @@ def collect_request_lines(path: Path, offset: int, current_request: int) -> list
     return [line.rstrip("\r") for line in text.splitlines() if needle in line]
 
 
+def classify_streaming_hang(client_logs: str) -> tuple[str, str] | None:
+    """Return a conservative phase-specific verdict for an open GTA stream call."""
+    steps = list(SCENE_PREPARE_STEP_PATTERN.finditer(client_logs))
+    if not steps or steps[-1].group("phase") != "begin":
+        return None
+
+    last = steps[-1]
+    reason = last.group("reason")
+    step = last.group("step")
+    joined_netgame = any(marker in client_logs for marker in NETGAME_JOIN_MARKERS)
+    if reason == "preconnect" and not joined_netgame:
+        verdict = "HANG_PRECONNECT_STREAMING"
+    elif reason in SPAWN_SCENE_REASONS and joined_netgame:
+        verdict = "HANG_SPAWN_STREAMING"
+    else:
+        return None
+
+    join_state = "present" if joined_netgame else "absent"
+    evidence = (
+        "PROBE_TRACE: timeout left scene_prepare_step open at "
+        f"reason={reason} step={step} phase=begin; Join/NetGame evidence {join_state}"
+    )
+    return verdict, evidence
+
+
 def classify_run(lines: list[str], client_returncode: int | None, client_logs: str, timed_out: bool) -> tuple[str, list[str]]:
     warnings: list[str] = []
     run_start = any("marker=RUN_START" in line for line in lines)
@@ -675,6 +729,12 @@ def classify_run(lines: list[str], client_returncode: int | None, client_logs: s
         if observations:
             warnings.append(f"{observations} visual observations require screenshot/golden review")
         return ("PASS_WITH_WARNINGS" if warnings else "PASS"), warnings
+    if timed_out and not run_start and not run_abort and not crash:
+        streaming_hang = classify_streaming_hang(client_logs)
+        if streaming_hang is not None:
+            verdict, evidence = streaming_hang
+            warnings.append(evidence)
+            return verdict, warnings
     if client_returncode is not None or crash:
         return ("RUNTIME_CRASH" if run_start else "PRECONNECT_CRASH"), warnings
     if run_abort:
@@ -771,11 +831,8 @@ def execute_run(
         "server_mode": server_mode,
         "client_mode": client_mode,
         "device_helper_path": str(profile.gta_root / settings.device_helper_filename),
-        "dll_sha256": sha256(profile.samp_dll),
-        "built_dll_sha256": sha256(settings.built_dll),
-        "pawn_sha256": sha256(settings.pawn_output),
     }
-    write_json(artifact_dir / "metadata.json", metadata)
+    write_run_metadata(artifact_dir, metadata, settings, profile)
     append_event(events, "PREPARE", artifact=str(artifact_dir), request=current_request)
 
     replace_existing_client(profile, client_mode, settings.shutdown_timeout_s)
@@ -785,6 +842,9 @@ def execute_run(
     if deploy and client_name == "replacement":
         append_event(events, "DEPLOY")
         deploy_replacement(settings, artifact_dir / "build")
+    # Build and deploy may have replaced every hashed artifact above. Persist
+    # the identities that will actually participate in this run.
+    write_run_metadata(artifact_dir, metadata, settings, profile)
     append_event(events, "DEVICE_HELPER_INSTALL")
     install_device_helper(settings, profile, artifact_dir / "build")
     if interaction:

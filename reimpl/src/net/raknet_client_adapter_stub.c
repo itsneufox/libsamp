@@ -140,6 +140,23 @@ int samp_raknet_client_drain_packets_autojoin(void *client, int max_packets, con
   return 0;
 }
 
+int samp_raknet_client_format_transport_statistics(
+    void *client, char *out_text, uint32_t out_text_size,
+    double *out_download_kbytes_per_second,
+    double *out_upload_kbytes_per_second) {
+  (void)client;
+  if (out_text != 0 && out_text_size != 0u) {
+    out_text[0] = '\0';
+  }
+  if (out_download_kbytes_per_second != 0) {
+    *out_download_kbytes_per_second = 0.0;
+  }
+  if (out_upload_kbytes_per_second != 0) {
+    *out_upload_kbytes_per_second = 0.0;
+  }
+  return -1;
+}
+
 int samp_raknet_client_get_rpc_probe_snapshot(void *client, samp_raknet_rpc_probe_snapshot *out_snapshot) {
   (void)client;
   if (out_snapshot == 0) {
@@ -231,6 +248,13 @@ int samp_raknet_client_send_death_notification(void *client, uint8_t death_reaso
 }
 
 int samp_raknet_client_send_pickup_notification(void *client, int32_t pickup_id) {
+  (void)client;
+  (void)pickup_id;
+  return -1;
+}
+
+int samp_raknet_client_send_pickup_process_notification(void *client,
+                                                        int32_t pickup_id) {
   (void)client;
   (void)pickup_id;
   return -1;

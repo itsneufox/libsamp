@@ -131,7 +131,7 @@ class LifecycleAnalyzerTests(unittest.TestCase):
             control, {"client_w": 640, "client_h": 448}
         )
         self.assertEqual(
-            [("mouse", {"action": "click", "x": 416, "y": 394})],
+            [("mouse", {"action": "click", "x": 420, "y": 378})],
             control.commands,
         )
 

@@ -14,15 +14,16 @@ usage() {
         "  $0 ping" \
         "  $0 screenshot [label]" \
         "  $0 screenshot-burst <label> [count] [interval-ms]" \
-        "  $0 key <ENTER|ESCAPE|SPACE|ALTENTER|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|MENUTEST|TPASSWORD|TPASSWORDVALUE|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP> [label]" \
+        "  $0 key <ENTER|ESCAPE|SPACE|ALTENTER|TAB|F6|F7|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|PASSENGER|MODE|CLASS|KILL|QUIT|MENUTEST|TPASSWORD|TPASSWORDVALUE|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP> [label]" \
         "  $0 click <window-x> <window-y> [label]" \
         "  $0 start <scenario> [samp|gta] [server-host] [server-port] [nickname] [favorite-index]" \
         "  $0 collect" \
         "  $0 stop" \
         "  $0 logcheck" \
-        "  $0 probe-profile <passive|no-hooks|asset-paths|custom-object-heavy|textdraw|textdraw-verbose|textdraw-render|font5|actor|actor-heavy|rpc-gap|dialog-menu>" \
+        "  $0 probe-profile <passive|no-hooks|asset-paths|custom-object-heavy|textdraw|textdraw-verbose|textdraw-render|font5|actor|actor-heavy|rpc-gap|dialog-menu|trailer-r5|vehicle-lifecycle|aim-bullet-jetpack|death-cleanup|pickup-r5|ui-latches-r5>" \
         "  $0 overlay-profile <bypass|shadow|replace>" \
         "  $0 overlay-kill <on|off>" \
+        "  $0 autopause-disable" \
         "  $0 favorite-port <index> <expected-host> <expected-port> <new-port>" \
         "  $0 favorite-endpoint <index> <expected-host> <expected-port> <new-host> <new-port>" \
         "  $0 validate <local-samp.dll>" \
@@ -107,7 +108,7 @@ case "$command" in
         key="${2:-}"
         label="${3:-key}"
         case "$key" in
-            ENTER|ESCAPE|SPACE|ALTENTER|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|MODE|CLASS|KILL|QUIT|MENUTEST|TPASSWORD|TPASSWORDVALUE|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP) ;;
+            ENTER|ESCAPE|SPACE|ALTENTER|TAB|F6|F7|UP|DOWN|LEFT|RIGHT|FIRE|GAS|GASFIRE|STEERLEFT|STEERRIGHT|BRAKE|HANDBRAKE|HORN|PASSENGER|MODE|CLASS|KILL|QUIT|MENUTEST|TPASSWORD|TPASSWORDVALUE|SFA|LVA|AA|ACTORS|ACTORSOFF|RPC175EDGE|RPC175EDGEOFF|RPC175RAW|RPC176RAW|RPC178EDGE|RPC178EDGEOFF|RPCLEGACYRAW|RPCLEGACYDRUNKON|RPCLEGACYDRUNKOFF|SYNCFOOT|SYNCCAR|SYNCRUSTLER|SYNCSTOP) ;;
             *) printf 'Unsupported key: %s\n' "$key" >&2; exit 2 ;;
         esac
         require_safe_name "$label" label
@@ -173,7 +174,7 @@ case "$command" in
     probe-profile)
         profile="${2:-}"
         case "$profile" in
-            passive|no-hooks|asset-paths|custom-object-heavy|textdraw|textdraw-verbose|textdraw-render|font5|actor|actor-heavy|rpc-gap|dialog-menu) ;;
+            passive|no-hooks|asset-paths|custom-object-heavy|textdraw|textdraw-verbose|textdraw-render|font5|actor|actor-heavy|rpc-gap|dialog-menu|trailer-r5|vehicle-lifecycle|aim-bullet-jetpack|death-cleanup|pickup-r5|ui-latches-r5) ;;
             *) printf 'Unsupported probe profile: %s\n' "$profile" >&2; exit 2 ;;
         esac
         ssh "${ssh_options[@]}" "$lab_host" \
@@ -202,6 +203,12 @@ case "$command" in
             powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
             -File "${remote_scripts}\\Set-SampReKillSwitch.ps1" \
             -Root "$remote_root" -State "$state"
+        ;;
+    autopause-disable)
+        ssh "${ssh_options[@]}" "$lab_host" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+            -File "${remote_scripts}\\Set-SampAutoPause.ps1" \
+            -Root "$remote_root"
         ;;
     favorite-port)
         favorite_index="${2:-}"
