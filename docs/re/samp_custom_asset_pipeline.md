@@ -64,8 +64,10 @@
   `SAMP.img` with 1673 entries (`1462` DFF, `208` TXD, `3` IFP), `SAMPCOL.img` with one aggregate
   `AllSAMPCOLs.col`, and `SAMP.ide` with `1433` `objs`/Atomic rows: `72` in `11682..11753` plus `1361`
   sparse rows in `18631..19999`; `CUSTOM.ide` is empty. Two additional `anim` rows, `19901` and `19902`,
-  are clump models and are not part of the 1433-entry Atomic pass. The replacement parser still ignores `anim`, so
-  those two models remain a separate open point. The low range has no missing DFF or COL names, but `46/72` rows
+  are clump models and are not part of the 1433-entry Atomic pass. The replacement now indexes those `anim` rows,
+  but excludes them from the opt-in full-bulk-first eligibility count so the default 1433-entry Atomic/Time pass
+  remains complete. Their animated-clump/IFP conversion remains a separate `TODO_VERIFY`. The low range has no
+  missing DFF or COL names, but `46/72` rows
   reference TXDs that are not in `SAMP.img` because they are vanilla GTA TXDs such as `csmafcouch`, `int_casinoint3`,
   and `a51_ext`. Replacement diagnostics must therefore treat `txd_file=missing` separately from an actually
   unavailable `CTxdStore` slot.
@@ -208,8 +210,9 @@
   guards the atomic/time/clump store counters before calling GTA's `Add*Model` functions.
 - `OBSERVED_037 + PROBE_TRACE + INFERRED + TODO_VERIFY`: the 2026-07-08 original-R5 run shows broad custom AtomicModelInfo
   creation first, then `CUSTOM.IMG`/`SAMP.IMG`/`SAMPCOL.IMG` directory loads, then COL binding. The replacement keeps
-  `SAMPDLL_CUSTOM_ASSET_BULK` enabled and now defaults `SAMPDLL_CUSTOM_ASSET_BULK_LIMIT` to the exact 1433 stock
-  `objs` rows. With the relocated store active, those sparse indexed rows are registered in IDE parse order before
+  `SAMPDLL_CUSTOM_ASSET_BULK` as an explicit opt-in and defaults `SAMPDLL_CUSTOM_ASSET_BULK_LIMIT` to the exact 1433
+  stock `objs` rows when enabled. With the relocated store active, those sparse indexed rows are registered in IDE
+  parse order before
   pending server IDs and before the first archive directory pass. This matches the observed `13984 + 1433 = 15417`
   Atomic count; the environment limit and targeted low-range helper remain diagnostic fallbacks.
 - `PROBE_TRACE + GTA_REVERSED_REF + TODO_VERIFY`: replacement build `Jul 10 2026 14:59:51`,
@@ -391,8 +394,11 @@ stock test set.
 
 1. `STATIC_037 + PROBE_TRACE + TODO_VERIFY`: keep mapping the original early-init IDE/archive function RVAs so
    the replacement can move custom model registration from late object fallback toward the original startup path.
-2. `PROBE_TRACE + TODO_VERIFY`: verify the default full bulk pass reports `considered=1433`, `skipped=0`, IDE-order
-   registration, and Atomic store `13984->15417` before the first `archive_dir_batch`. Then rerun
+2. `PROBE_TRACE + TODO_VERIFY`: with the opt-in bulk pass enabled, verify the default limit reports
+   `considered=1433`, `skipped=0`, `bulk_first=1`, and IDE-order registration before the first
+   `archive_dir_batch`, even though the shared index also contains the two deferred `anim` rows. The default heap
+   path must leave the native Atomic count unchanged; `13984->15417` applies only to a future verified native-store
+   implementation. Then rerun
    `/sampobjscan 11682 5000 3000`; after `11753`, model `18631` and later high IDs must show nonzero DFF `cd_size`,
    load state `1`, readable `rw_object`, and successful `create_opcode_end`.
 3. `PROBE_TRACE + TODO_VERIFY`: if a stock Atomic still logs `streaming_dff_unmapped`, keep it pending and inspect

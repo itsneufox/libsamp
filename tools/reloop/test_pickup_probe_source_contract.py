@@ -91,6 +91,14 @@ class PickupProbeSourceContractTests(unittest.TestCase):
         self.assertIn("probe_pickup_flush(probe_log);", self.asi)
 
     def test_outgoing_pickup_rpcs_share_the_existing_vtable_hook(self) -> None:
+        self.assertIn(
+            "#define PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX 25u",
+            self.asi,
+        )
+        self.assertIn(
+            "#define PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA 0x00034620u",
+            self.asi,
+        )
         rpc_hook = body_between(
             self.asi,
             "static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(",
@@ -105,6 +113,18 @@ class PickupProbeSourceContractTests(unittest.TestCase):
         self.assertIn("rpc_id == PROBE_PICKUP_WEAPON_RPC", rpc_hook)
         self.assertIn("probe_pickup_is_active()", rpc_hook)
         self.assertNotIn("pickup_hooks_enabled()", rpc_hook)
+        self.assertNotIn("network_id", rpc_hook)
+        self.assertNotIn("reply_from_target", rpc_hook)
+        self.assertIn("overload=short", rpc_hook)
+
+        installer = body_between(
+            self.asi,
+            "static int install_dialog_menu_rpc_hook(",
+            "static int preflight_samp_font5_code_hooks(",
+        )
+        self.assertIn("PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA", installer)
+        self.assertIn("unexpected_short_bitstream_target", installer)
+        self.assertIn("Index 26/+0x68", installer)
 
         observer = body_between(
             self.pickup,
@@ -130,7 +150,9 @@ class PickupProbeSourceContractTests(unittest.TestCase):
         self.assertIn("samp.dll+0x00013440", self.evidence)
         self.assertIn("samp.dll+0x00013520", self.evidence)
         self.assertIn("samp.dll+0x00118A10", self.evidence)
-        self.assertIn("but no new\noriginal-R5 runtime trace", self.evidence)
+        self.assertIn("20260802-112802-distributed-sync-pickup-57189", self.evidence)
+        self.assertIn("`OBSERVED_ORDINARY`", self.evidence)
+        self.assertIn("vtable slot 25", self.evidence)
 
 
 if __name__ == "__main__":

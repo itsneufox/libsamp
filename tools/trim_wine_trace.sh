@@ -27,6 +27,26 @@ SAMP_WINDOW_FILE="${OUT_DIR}/samp_lifecycle_window.log"
 TOP_EVENTS_FILE="${OUT_DIR}/top_events.log"
 TEXTDRAW_FILE="${OUT_DIR}/textdraw_focus.log"
 SUMMARY_FILE="${OUT_DIR}/SUMMARY.txt"
+SAMP_MODULE_BASE_FILE="${OUT_DIR}/samp_module_base.txt"
+
+# PROBE_TRACE: Wine's build_module line binds the loaded samp.dll path to its
+# runtime base. Keep the fallback name-bound if that marker is absent; callers
+# still treat the missing native-load marker as a failed check.
+SAMP_LOAD_LINE="$(
+  rg -m1 -i \
+    'trace:loaddll:build_module Loaded L".*samp\.dll" at [[:xdigit:]]+: native' \
+    "$IN_FILE" 2>/dev/null || true
+)"
+SAMP_MODULE_BASE=""
+if [[ "$SAMP_LOAD_LINE" =~ [[:space:]]at[[:space:]]([[:xdigit:]]+):[[:space:]][Nn][Aa][Tt][Ii][Vv][Ee] ]]; then
+  SAMP_MODULE_BASE="${BASH_REMATCH[1]^^}"
+fi
+printf '%s\n' "$SAMP_MODULE_BASE" >"$SAMP_MODULE_BASE_FILE"
+
+SAMP_MODULE_PATTERN='[[:xdigit:]]+'
+if [[ -n "$SAMP_MODULE_BASE" ]]; then
+  SAMP_MODULE_PATTERN="$SAMP_MODULE_BASE"
+fi
 
 # Broad high-signal focus view (lifecycle + module load + key SA-MP DLLs + net status text).
 rg -n -i \
@@ -44,6 +64,8 @@ rg -n -i \
 
 # Relay often appears as "Call ..."/"Ret ..." lines; capture these explicitly.
 rg -n -i \
+  -e "Call PE DLL \\(proc=.*module=${SAMP_MODULE_PATTERN} L\"samp\\.dll\",reason=" \
+  -e "Ret  PE DLL \\(proc=.*module=${SAMP_MODULE_PATTERN} L\"samp\\.dll\",reason=" \
   -e 'Call .*?\.(WSAStartup|WSACleanup|socket|connect|bind|sendto|recvfrom|send|recv|gethostbyname|inet_addr|inet_ntoa|select|ioctlsocket)' \
   -e 'Call .*?\.(BASS_|Direct3DCreate9|D3DX|CreateWindowEx|SetWindowLong|CallWindowProc)' \
   -e 'Ret  .*?\.(WSAStartup|WSACleanup|socket|connect|bind|sendto|recvfrom|send|recv|gethostbyname|inet_addr|inet_ntoa|select|ioctlsocket)' \
@@ -52,8 +74,8 @@ rg -n -i \
 
 # Smaller call stream focused on SA-MP lifecycle + known ABI-relevant modules/APIs.
 rg -n -i \
-  -e 'Call PE DLL \(proc=.*module=02380000 L"samp\.dll",reason=' \
-  -e 'Ret  PE DLL \(proc=.*module=02380000 L"samp\.dll",reason=' \
+  -e "Call PE DLL \\(proc=.*module=${SAMP_MODULE_PATTERN} L\"samp\\.dll\",reason=" \
+  -e "Ret  PE DLL \\(proc=.*module=${SAMP_MODULE_PATTERN} L\"samp\\.dll\",reason=" \
   -e 'Call (WSOCK32|WS2_32|BASS|WINMM|D3DX9_25|D3D9|USER32|KERNEL32)\.' \
   -e 'Ret  (WSOCK32|WS2_32|BASS|WINMM|D3DX9_25|D3D9|USER32|KERNEL32)\.' \
   -e 'Call .*?\.(connect|sendto|recvfrom|gethostbyname|inet_addr|inet_ntoa|WSAStartup|WSACleanup)' \
@@ -61,14 +83,16 @@ rg -n -i \
   "$CALL_FILE" >"$CALL_REDUCED_FILE" || true
 
 # API frequency map from reduced call stream.
-awk '
+awk -v samp_module_base="$SAMP_MODULE_BASE" '
   match($0, /(Call|Ret  ) ([A-Za-z0-9_]+)\.([A-Za-z0-9_@]+)/, m) {
     key = m[2] "." m[3]
     cnt[key]++
   }
-  match($0, /(Call|Ret  ) PE DLL \(proc=.*module=02380000 L"samp\.dll",reason=([A-Z_]+)/, p) {
-    key = "PE_DLL_REASON." p[2]
-    cnt[key]++
+  match($0, /(Call|Ret  ) PE DLL \(proc=.*module=([[:xdigit:]]+) L"samp\.dll",reason=([A-Z_]+)/, p) {
+    if (samp_module_base == "" || toupper(p[2]) == samp_module_base) {
+      key = "PE_DLL_REASON." p[3]
+      cnt[key]++
+    }
   }
   END {
     for (k in cnt) print cnt[k] "\t" k
@@ -90,18 +114,18 @@ awk -F'trace:' 'NF>1 { print $2 }' "$FOCUS_FILE" \
 
 # Extract only the samp.dll lifetime window.
 START_LINE="$(rg -n 'process_attach \(L"samp\.dll"' "$IN_FILE" | head -n1 | cut -d: -f1 || true)"
-END_LINE="$(rg -n 'MODULE_InitDLL \(02380000 L"samp\.dll",PROCESS_DETACH' "$IN_FILE" | head -n1 | cut -d: -f1 || true)"
+END_LINE="$(rg -n -i "MODULE_InitDLL \\(${SAMP_MODULE_PATTERN} L\"samp\\.dll\",PROCESS_DETACH" "$IN_FILE" | head -n1 | cut -d: -f1 || true)"
 if [[ -n "${START_LINE:-}" && -n "${END_LINE:-}" && "$END_LINE" -ge "$START_LINE" ]]; then
   sed -n "${START_LINE},${END_LINE}p" "$IN_FILE" >"$SAMP_WINDOW_FILE"
 else
-  rg -n -i 'samp\.dll|MODULE_InitDLL \(02380000' "$IN_FILE" >"$SAMP_WINDOW_FILE" || true
+  rg -n -i "samp\\.dll|MODULE_InitDLL \\(${SAMP_MODULE_PATTERN}" "$IN_FILE" >"$SAMP_WINDOW_FILE" || true
 fi
 
 # Small deterministic event list for quick checks in CI or manual review.
 rg -n -i \
   -e 'process_attach \(L"samp\.dll"' \
-  -e 'MODULE_InitDLL \(02380000 L"samp\.dll",PROCESS_ATTACH' \
-  -e 'MODULE_InitDLL \(02380000 L"samp\.dll",PROCESS_DETACH' \
+  -e "MODULE_InitDLL \\(${SAMP_MODULE_PATTERN} L\"samp\\.dll\",PROCESS_ATTACH" \
+  -e "MODULE_InitDLL \\(${SAMP_MODULE_PATTERN} L\"samp\\.dll\",PROCESS_DETACH" \
   -e 'Loaded L".*samp\.dll"' \
   -e 'Loaded L".*d3dx9_25\.dll"' \
   -e 'Loaded L".*WSOCK32\.dll"' \
@@ -122,6 +146,7 @@ rg -n -i \
 
 {
   echo "input: $IN_FILE"
+  echo "samp module base: ${SAMP_MODULE_BASE:-not detected}"
   wc -l "$IN_FILE"
   echo
   for f in \
@@ -132,6 +157,7 @@ rg -n -i \
     call_api_counts.tsv \
     loaddll_relevant.log \
     focus_event_counts.tsv \
+    samp_module_base.txt \
     samp_lifecycle_window.log \
     top_events.log \
     textdraw_focus.log; do

@@ -43,6 +43,8 @@ selection prematurely and could open GTA's pause menu while cancelling.
 The replacement now:
 
 - keeps selection and cursor ownership after ordinary TextDraw clicks;
+- consumes `WM_LBUTTONUP` and submits a valid hovered ID without requiring a
+  preceding delivered button-down, matching `samp.dll+0x71570`;
 - consumes both Escape phases;
 - sends ID `65535` and clears selection on Escape key-up;
 - clears the adapter's selection snapshot for a cancel even if the network
@@ -126,8 +128,9 @@ open while either UI owns input.
    require the R5 ownership outcomes above.
 6. Pause: compare keyboard Escape, controller Start, and an externally opened
    frontend menu while chat or TextDraw selection is active.
-7. Mouse edge case: send `WM_LBUTTONUP` over a selectable TextDraw without a
-   preceding delivered down. R5's selector has no down latch, while the
-   replacement currently requires one.
+7. Mouse edge case: runtime-confirm that `WM_LBUTTONUP` over a selectable
+   TextDraw without a preceding delivered down emits the hovered RPC 83. The
+   replacement now mirrors R5's statically recovered no-latch path; a paired
+   runtime trace remains `TODO_VERIFY`.
 8. Chat: compare held T, F6, key repeat, Home/End/Left/Right, clipboard,
    non-ASCII input, and focus loss.

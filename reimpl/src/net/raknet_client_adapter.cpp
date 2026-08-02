@@ -10277,31 +10277,61 @@ int samp_raknet_client_send_death_notification(void *client, uint8_t death_reaso
   return sent ? 0 : -2;
 }
 
-int samp_raknet_client_send_pickup_notification(void *client, int32_t pickup_id) {
+static int send_pickup_notification_compat(
+    void *client, int32_t pickup_id,
+    samp_pickup_rpc_source_compat source) {
   RakNet::BitStream bs_send;
   int sent = 0;
+  const unsigned int reliability = samp_pickup_rpc_reliability_r5(source);
+  const char *evidence =
+      source == SAMP_PICKUP_RPC_SOURCE_ORDINARY_PICKED_UP
+          ? "STATIC_037,OBSERVED_037,PROBE_TRACE"
+          : "STATIC_037,TODO_VERIFY";
 
   if (client == nullptr || client != g_rpc_probe.client ||
-      !samp_pickup_pool_id_valid(pickup_id)) {
+      !samp_pickup_pool_id_valid(pickup_id) || reliability == 0U) {
     return -1;
   }
 
   /*
-   * STATIC_037 + ALT_02X_CODE:
+   * STATIC_037:
    * R5 CPickupPool::PickedUp at samp.dll+0x13440 writes a signed 32-bit pool
-   * index and sends RPC 131 HIGH_PRIORITY/RELIABLE_SEQUENCED on channel zero.
+   * index and sends RPC 131 HIGH_PRIORITY/RELIABLE_ORDERED on channel zero.
+   * The separate type-14 CPickupPool::Process branch at +0x13520 uses
+   * RELIABLE_SEQUENCED.
+   * OBSERVED_037 + PROBE_TRACE:
+   * Original-R5 run
+   * 20260802-112802-distributed-sync-pickup-57189 corroborates the ordinary
+   * reliability value 9, priority 1, channel 0 and 32-bit payload.
    */
   bs_send.Write(static_cast<int>(pickup_id));
   sent = static_cast<RakNet::RakClientInterface *>(client)
              ->RPC(kRpcPickedUpPickup, &bs_send, RakNet::HIGH_PRIORITY,
-                   RakNet::RELIABLE_SEQUENCED, 0, false,
+                   static_cast<RakNet::PacketReliability>(reliability), 0, false,
                    RakNet::UNASSIGNED_NETWORK_ID, nullptr)
              ? 1
              : 0;
   trace_netf("rpc-auto-out id=131 name=PickedUpPickup pickup=%d sent=%d "
-             "evidence=STATIC_037,ALT_02X_CODE",
-             static_cast<int>(pickup_id), sent);
+             "source=%s priority=1 reliability=%u channel=0 "
+             "evidence=%s",
+             static_cast<int>(pickup_id), sent,
+             source == SAMP_PICKUP_RPC_SOURCE_ORDINARY_PICKED_UP
+                 ? "ordinary_picked_up"
+                 : "process",
+             reliability, evidence);
   return sent ? 0 : -2;
+}
+
+int samp_raknet_client_send_pickup_notification(void *client,
+                                                 int32_t pickup_id) {
+  return send_pickup_notification_compat(
+      client, pickup_id, SAMP_PICKUP_RPC_SOURCE_ORDINARY_PICKED_UP);
+}
+
+int samp_raknet_client_send_pickup_process_notification(
+    void *client, int32_t pickup_id) {
+  return send_pickup_notification_compat(
+      client, pickup_id, SAMP_PICKUP_RPC_SOURCE_PROCESS);
 }
 
 int samp_raknet_client_mark_class_selection_after_death(void *client) {

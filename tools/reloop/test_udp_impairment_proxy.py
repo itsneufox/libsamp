@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import socket
 import threading
 import time
@@ -44,6 +45,24 @@ class EchoServer:
 
 
 class UdpImpairmentProxyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        probes: list[socket.socket] = []
+        try:
+            for address in ("127.0.0.1", "127.0.0.2"):
+                probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                probes.append(probe)
+                probe.bind((address, 0))
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EPERM):
+                raise unittest.SkipTest(
+                    "AF_INET sockets are blocked by the execution sandbox"
+                ) from exc
+            raise
+        finally:
+            for probe in probes:
+                probe.close()
+
     def run_proxy(self, proxy: UdpImpairmentProxy) -> threading.Thread:
         thread = threading.Thread(target=proxy.run, daemon=True)
         thread.start()

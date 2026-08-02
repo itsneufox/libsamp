@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "actor_facing_compat.h"
+#include "custom_asset_bulk_compat.h"
 #include "gta_camera_aim_compat.h"
 #include "gta_quaternion_compat.h"
 #include "pickup_pool_compat.h"
@@ -1209,10 +1210,6 @@
 #define SAMP_ASSET_IDE_SOURCE_UNKNOWN 0u
 #define SAMP_ASSET_IDE_SOURCE_SAMP 1u
 #define SAMP_ASSET_IDE_SOURCE_CUSTOM 2u
-#define SAMP_ASSET_IDE_SECTION_UNKNOWN 0u
-#define SAMP_ASSET_IDE_SECTION_OBJS 1u
-#define SAMP_ASSET_IDE_SECTION_TOBJ 2u
-#define SAMP_ASSET_IDE_SECTION_ANIM 3u
 #define SAMP_RAKNET_RPC_FLAG_GAME_STATE_MASK                                                                      \
   (SAMP_RAKNET_RPC_FLAG_PLAYER_POS | SAMP_RAKNET_RPC_FLAG_PLAYER_FACING | SAMP_RAKNET_RPC_FLAG_WEATHER |          \
    SAMP_RAKNET_RPC_FLAG_WORLD_TIME | SAMP_RAKNET_RPC_FLAG_SET_TIME_EX | SAMP_RAKNET_RPC_FLAG_TOGGLE_CLOCK |        \
@@ -2661,6 +2658,7 @@ typedef struct samp_runtime_state {
   LONG mp_session_applied_pickup_event_seq;
   LONG mp_session_applied_explosion_event_seq;
   uint32_t pickup_handles[SAMP_PICKUP_POOL_CAPACITY_037];
+  uint8_t pickup_types[SAMP_PICKUP_POOL_CAPACITY_037];
   DWORD pickup_notify_after_tick[SAMP_PICKUP_POOL_CAPACITY_037];
   LONG checkpoint_enabled;
   float checkpoint_pos[3];
@@ -24464,8 +24462,17 @@ static int textdraw_compat_handle_mouse(HWND hwnd, UINT msg, LPARAM lparam) {
     InterlockedExchange(&g_runtime.textdraw_mouse_down, 1);
     return 1;
   }
-  if (msg == WM_LBUTTONUP && InterlockedExchange(&g_runtime.textdraw_mouse_down, 0) != 0) {
+  if (msg == WM_LBUTTONUP) {
     uint16_t textdraw_id = 0xFFFFu;
+
+    /*
+     * STATIC_037:samp.dll+0x71570
+     * SHA256=b72b5dbe725f81864ca3f78bc7063bda56cc05fc7188af822fa7a754432553a2
+     * R5 consumes every primary-button release while selection is active and
+     * submits the current valid hover ID without consulting a button-down
+     * latch. Keep the latch only as local pressed-state bookkeeping.
+     */
+    (void)InterlockedExchange(&g_runtime.textdraw_mouse_down, 0);
     if (textdraw_compat_hit_test(cursor.x, cursor.y, &textdraw_id)) {
       (void)textdraw_compat_submit_click(textdraw_id);
     }
@@ -31509,15 +31516,22 @@ static int samp_asset_register_custom_model_infos_compat(const char *source) {
   (void)samp_asset_read_model_info_store_count_compat(SAMP_ADDR_MODEL_INFO_ADD_ATOMIC, &store_before);
 
   /* OBSERVED_037 + PROBE_TRACE:
-   * Preserve SAMP.ide parse order. Stock R5 registers the high `objs` rows
-   * first and the low 11682..11753 block last; model 11753 is the allocation
-   * that advances the original AtomicModelInfo count from 15416 to 15417.
+   * Preserve SAMP.ide parse order for the pre-archive Atomic/Time pass. Stock
+   * R5 registers the high `objs` rows first and the low 11682..11753 block
+   * last; model 11753 is the allocation that advances the original
+   * AtomicModelInfo count from 15416 to 15417. Indexed `anim` rows belong to
+   * the separate clump/IFP lifecycle and neither consume this pass's limit nor
+   * get registered early here (TODO_VERIFY).
    */
   for (order_index = 0; order_index < order_count; ++order_index) {
     int32_t model = (int32_t)g_runtime.samp_asset_model_order[order_index];
     const samp_asset_model_entry_compat *model_entry = samp_asset_model_lookup_compat(model);
     int was_available = 0;
     if (model_entry == NULL) {
+      continue;
+    }
+    if (!samp_asset_ide_section_is_prearchive_model_info_compat(
+            model_entry->section)) {
       continue;
     }
     if (considered >= (LONG)bulk_limit) {
@@ -31551,15 +31565,52 @@ static int samp_asset_register_custom_model_infos_compat(const char *source) {
   return (registered + already_registered) > 0;
 }
 
+static samp_asset_prearchive_bulk_plan_compat
+samp_asset_build_prearchive_bulk_plan_compat(void) {
+  samp_asset_prearchive_bulk_plan_compat plan;
+  LONG order_count = g_runtime.samp_asset_model_order_count;
+  LONG order_index = 0;
+
+  samp_asset_prearchive_bulk_plan_reset_compat(&plan);
+  if (order_count < 0) {
+    order_count = 0;
+  } else if (order_count > (LONG)SAMP_GTA_MODEL_INFO_COUNT) {
+    order_count = (LONG)SAMP_GTA_MODEL_INFO_COUNT;
+  }
+
+  for (order_index = 0; order_index < order_count; ++order_index) {
+    const int32_t model =
+        (int32_t)g_runtime.samp_asset_model_order[order_index];
+    const samp_asset_model_entry_compat *model_entry =
+        samp_asset_model_lookup_compat(model);
+
+    if (model_entry != NULL) {
+      samp_asset_prearchive_bulk_plan_add_section_compat(&plan,
+                                                          model_entry->section);
+    }
+  }
+  return plan;
+}
+
 static int samp_asset_full_bulk_registration_configured_compat(void) {
-  LONG indexed = g_runtime.samp_asset_model_order_count;
+  const samp_asset_prearchive_bulk_plan_compat plan =
+      samp_asset_build_prearchive_bulk_plan_compat();
+  const int bulk_enabled = samp_asset_custom_asset_bulk_enabled_compat();
+  const uint32_t bulk_limit = samp_asset_custom_asset_bulk_limit_compat();
   int model_info_path_ready =
       samp_asset_custom_render_path_compat() == SAMP_OBJECT_COMPAT_CUSTOM_RENDER_PATH_HEAP ||
       (samp_asset_atomic_model_store_expanded_compat() &&
        samp_asset_atomic_model_store_capacity_compat() >= SAMP_GTA_ATOMIC_MODEL_INFO_COUNT);
 
-  return samp_asset_custom_asset_bulk_enabled_compat() && model_info_path_ready && indexed > 0 &&
-         samp_asset_custom_asset_bulk_limit_compat() >= (uint32_t)indexed;
+  /* OBSERVED_037 + PROBE_TRACE:
+   * Stock SAMP.ide contributes 1,433 `objs` rows to R5's pre-archive
+   * ModelInfo pass. The two indexed `anim` rows use the clump/IFP lifecycle
+   * and must not make the default 1,433-entry Atomic/Time pass look partial.
+   * GTA_REVERSED_REF + TODO_VERIFY: animated-clump conversion remains a
+   * separate on-demand phase; this decision does not register it early.
+   */
+  return samp_asset_prearchive_full_bulk_ready_compat(
+      bulk_enabled, model_info_path_ready, bulk_limit, &plan);
 }
 
 static int samp_asset_register_custom_model_compat(int32_t model, const char *source) {
@@ -36764,12 +36815,16 @@ static void gta_disable_race_checkpoint_compat(void) {
 }
 
 static int gta_apply_pickup_event_compat(const samp_raknet_pickup_event *event) {
+  uint32_t index = 0u;
   uint32_t *handle = NULL;
+  int created = 0;
   if (event == NULL || !samp_pickup_pool_id_valid(event->pickup_id)) {
     return 0;
   }
-  handle = &g_runtime.pickup_handles[(uint32_t)event->pickup_id];
-  g_runtime.pickup_notify_after_tick[(uint32_t)event->pickup_id] = 0u;
+  index = (uint32_t)event->pickup_id;
+  handle = &g_runtime.pickup_handles[index];
+  g_runtime.pickup_types[index] = 0u;
+  g_runtime.pickup_notify_after_tick[index] = 0u;
   if (*handle != 0u) {
     (void)gta_script_command_compat(0x0215u, "i", (int)*handle);
     *handle = 0u;
@@ -36784,8 +36839,14 @@ static int gta_apply_pickup_event_compat(const samp_raknet_pickup_event *event) 
     (void)gta_script_command_compat(0x0247u, "i", (int)event->model);
     (void)gta_script_command_compat(0x038Bu, "");
   }
-  return gta_script_command_compat(0x0213u, "iifffv", (int)event->model, (int)event->type,
-                                   event->pos[0], event->pos[1], event->pos[2], handle) && *handle != 0u;
+  created = gta_script_command_compat(0x0213u, "iifffv", (int)event->model,
+                                      (int)event->type, event->pos[0], event->pos[1],
+                                      event->pos[2], handle) &&
+            *handle != 0u;
+  if (created) {
+    g_runtime.pickup_types[index] = (uint8_t)event->type;
+  }
+  return created;
 }
 
 static void gta_destroy_all_pickups_compat(void) {
@@ -36795,6 +36856,7 @@ static void gta_destroy_all_pickups_compat(void) {
       (void)gta_script_command_compat(0x0215u, "i", (int)g_runtime.pickup_handles[i]);
       g_runtime.pickup_handles[i] = 0u;
     }
+    g_runtime.pickup_types[i] = 0u;
     g_runtime.pickup_notify_after_tick[i] = 0u;
   }
 }
@@ -36822,19 +36884,26 @@ static void __cdecl gta_pickup_collected_callback_compat(uintptr_t pickup_entry)
         (notify_after != 0u && (int32_t)(now - notify_after) < 0)) {
       continue;
     }
+    if (g_runtime.pickup_types[i] == 14u) {
+      /* STATIC_037: type 14 is reported by CPickupPool::Process, not by the
+       * ordinary PickedUp source. Preserve that call-source/QoS distinction. */
+      return;
+    }
     /*
-     * ALT_02X_CODE + GTA_REVERSED_REF:
+     * STATIC_037 + OBSERVED_037 + PROBE_TRACE + ALT_02X_CODE + GTA_REVERSED_REF:
      * GTA-SA 1.0 US reaches gta_sa.exe+0x579C6 with ESI pointing at the
      * collected 0x20-byte CPickup entry. Legacy SA-MP hooks this exact point,
      * converts the entry address to the GTA pool index and forwards the
-     * matching SA-MP pool slot through RPC 131.
+     * matching SA-MP pool slot through RPC 131. Original-R5 run
+     * 20260802-112802-distributed-sync-pickup-57189 confirms priority 1,
+     * RELIABLE_ORDERED (numeric 9), channel 0 and a signed 32-bit slot.
      */
     if (samp_raknet_client_send_pickup_notification(
             g_runtime.net_mgr.raknet_client, (int32_t)i) == 0) {
       g_runtime.pickup_notify_after_tick[i] = now + 1500u;
       runtime_tracef("pickup: collected id=%lu handle=%lu gta_index=%lu "
-                     "source=gta_collect_hook guard_ms=1500 "
-                     "evidence=ALT_02X_CODE,GTA_REVERSED_REF,PROBE_TRACE",
+                     "source=ordinary_picked_up reliability=9 guard_ms=1500 "
+                     "evidence=STATIC_037,OBSERVED_037,PROBE_TRACE,ALT_02X_CODE,GTA_REVERSED_REF",
                      (unsigned long)i, (unsigned long)handle,
                      (unsigned long)gta_index);
     }
@@ -36844,6 +36913,7 @@ static void __cdecl gta_pickup_collected_callback_compat(uintptr_t pickup_entry)
 
 static void gta_process_pickups_compat(void) {
   DWORD now = GetTickCount();
+  int collect_hook_installed = 0;
   uint32_t i = 0u;
 
   if (g_runtime.net_mgr.raknet_client == NULL ||
@@ -36852,34 +36922,49 @@ static void gta_process_pickups_compat(void) {
       InterlockedCompareExchange(&g_runtime.mp_session_spawn_finalized, 0, 0) == 0) {
     return;
   }
+  collect_hook_installed =
+      InterlockedCompareExchange(&g_runtime.pickup_collect_hook_installed, 0, 0) != 0;
 
   for (i = 0u; i < SAMP_PICKUP_POOL_CAPACITY_037; ++i) {
     uint32_t handle = g_runtime.pickup_handles[i];
     DWORD notify_after = g_runtime.pickup_notify_after_tick[i];
+    uint8_t pickup_type = g_runtime.pickup_types[i];
+    int process_source = pickup_type == 14u;
     int result = 0;
 
     if (handle == 0u || (notify_after != 0u &&
                          (int32_t)(now - notify_after) < 0)) {
       continue;
     }
+    if (collect_hook_installed && !process_source) {
+      continue;
+    }
     /*
-     * STATIC_037 + ALT_02X_CODE + TODO_VERIFY:
+     * STATIC_037 + TODO_VERIFY:
      * R5 CPickupPool::Process at samp.dll+0x13520 keeps a 15-process-tick
-     * counter for normal pickups and has a distinct type-14 path. This
-     * replacement still uses a wall-clock guard for its generic fallback;
-     * preserve that observed-safe behavior until the Process cadence and
-     * type-14 branch have a comparable runtime trace.
+     * counter for normal pickups and sends type-14 RPC 131 from a distinct
+     * HIGH_PRIORITY/RELIABLE_SEQUENCED source. With the GTA collection hook
+     * installed, ordinary pickups are therefore left to PickedUp above. The
+     * wall-clock guard remains a replacement safety fallback until type-14
+     * has a comparable live trace.
      */
     if (!gta_script_command_condition_compat(0x0214u, "i", (int)handle)) {
       continue;
     }
-    result = samp_raknet_client_send_pickup_notification(
-        g_runtime.net_mgr.raknet_client, (int32_t)i);
+    result = process_source
+                 ? samp_raknet_client_send_pickup_process_notification(
+                       g_runtime.net_mgr.raknet_client, (int32_t)i)
+                 : samp_raknet_client_send_pickup_notification(
+                       g_runtime.net_mgr.raknet_client, (int32_t)i);
     if (result == 0) {
       g_runtime.pickup_notify_after_tick[i] = now + 250u;
-      runtime_tracef("pickup: collected id=%lu handle=%lu guard_ms=250 "
-                     "evidence=ALT_02X_CODE,TODO_VERIFY",
-                     (unsigned long)i, (unsigned long)handle);
+      runtime_tracef("pickup: collected id=%lu handle=%lu type=%u source=%s "
+                     "reliability=%u guard_ms=250 "
+                     "evidence=STATIC_037,TODO_VERIFY",
+                     (unsigned long)i, (unsigned long)handle,
+                     (unsigned)pickup_type,
+                     process_source ? "process" : "ordinary_fallback",
+                     process_source ? 10u : 9u);
     }
   }
 }

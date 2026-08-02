@@ -253,6 +253,13 @@ int samp_raknet_client_send_pickup_notification(void *client, int32_t pickup_id)
   return -1;
 }
 
+int samp_raknet_client_send_pickup_process_notification(void *client,
+                                                        int32_t pickup_id) {
+  (void)client;
+  (void)pickup_id;
+  return -1;
+}
+
 int samp_raknet_client_send_onfoot_sync(void *client, const samp_raknet_onfoot_sync *sync) {
   (void)client;
   (void)sync;

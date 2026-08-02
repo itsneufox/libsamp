@@ -152,6 +152,45 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(destination.read_text(encoding="utf-8"), "new\n")
 
 
+class MetadataTests(unittest.TestCase):
+    def test_metadata_hashes_match_deployed_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / "prefix"
+            profile = reloop.ClientProfile("replacement", prefix, None, None)
+            profile.gta_root.mkdir(parents=True)
+            profile.samp_dll.write_bytes(b"previous dll")
+            previous_hash = reloop.sha256(profile.samp_dll)
+
+            built_dll = root / "build" / "samp.dll"
+            built_dll.parent.mkdir()
+            built_dll.write_bytes(b"current dll")
+            pawn_output = root / "test_cmds.amx"
+            pawn_output.write_bytes(b"current pawn")
+            settings = type("SettingsStub", (), {
+                "built_dll": built_dll,
+                "pawn_output": pawn_output,
+                "clients": {"replacement": profile},
+            })()
+            artifact_dir = root / "artifact"
+            metadata = {
+                "dll_sha256": previous_hash,
+                "built_dll_sha256": "stale-build-hash",
+                "pawn_sha256": "stale-pawn-hash",
+            }
+
+            deploy = reloop.deploy_replacement(settings, artifact_dir / "build")
+            reloop.write_run_metadata(artifact_dir, metadata, settings, profile)
+
+            persisted = __import__("json").loads(
+                (artifact_dir / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(persisted["dll_sha256"], deploy["installed_sha256"])
+            self.assertEqual(persisted["dll_sha256"], persisted["built_dll_sha256"])
+            self.assertEqual(persisted["pawn_sha256"], reloop.sha256(pawn_output))
+            self.assertNotEqual(persisted["dll_sha256"], previous_hash)
+
+
 class ComparisonTests(unittest.TestCase):
     def test_matching_state_is_not_claimed_as_opcode_parity(self):
         with tempfile.TemporaryDirectory() as directory:

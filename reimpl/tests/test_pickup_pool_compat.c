@@ -12,5 +12,11 @@ int main(void) {
   assert(samp_pickup_pool_id_valid(4095));
   assert(!samp_pickup_pool_id_valid(4096));
   assert(!samp_pickup_pool_id_valid(INT32_MAX));
+  assert(samp_pickup_rpc_reliability_r5(
+             SAMP_PICKUP_RPC_SOURCE_ORDINARY_PICKED_UP) == 9u);
+  assert(samp_pickup_rpc_reliability_r5(
+             SAMP_PICKUP_RPC_SOURCE_PROCESS) == 10u);
+  assert(samp_pickup_rpc_reliability_r5(
+             SAMP_PICKUP_RPC_SOURCE_INVALID) == 0u);
   return 0;
 }

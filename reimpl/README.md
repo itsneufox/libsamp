@@ -117,7 +117,17 @@ can over-expand existing `GDI32`/`KERNEL32`/`WSOCK32` groups.
 tools/compare_runtime_traces.sh /path/to/reference.log /path/to/rebuild.log
 ```
 
-Use this to compare normalized event sequences and event-count deltas between reference and rebuild runs.
+Use this to compare normalized event sequences and event-count deltas between reference and rebuild runs. The command exits with status `5` when a critical or high-severity runtime check fails. Use `--report-only` to retain report generation with a successful exit status:
+
+```bash
+tools/compare_runtime_traces.sh --report-only /path/to/reference.log /path/to/rebuild.log
+```
+
+The SA-MP module base is derived from Wine's native `build_module` load event, so relocated traces do not require manual adjustment. Run the small fixture regression test with:
+
+```bash
+bash tools/tests/test_compare_runtime_traces.sh
+```
 
 ## ABI Notes
 

@@ -1,14 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "Usage: $0 <reference-trace.log> <candidate-trace.log> [out-dir]" >&2
+usage() {
+  echo "Usage: $0 [--report-only] <reference-trace.log> <candidate-trace.log> [out-dir]" >&2
+  echo "  --report-only  Write reports but suppress exit status 5 for failed checks." >&2
+}
+
+REPORT_ONLY=0
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --report-only)
+      REPORT_ONLY=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      while [[ $# -gt 0 ]]; do
+        POSITIONAL+=("$1")
+        shift
+      done
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      ;;
+  esac
+  shift
+done
+
+if [[ ${#POSITIONAL[@]} -lt 2 || ${#POSITIONAL[@]} -gt 3 ]]; then
+  usage
   exit 1
 fi
 
-REF_LOG="$1"
-CAND_LOG="$2"
-OUT_DIR="${3:-/tmp/samp-runtime-trace-diff}"
+REF_LOG="${POSITIONAL[0]}"
+CAND_LOG="${POSITIONAL[1]}"
+OUT_DIR="${POSITIONAL[2]:-/tmp/samp-runtime-trace-diff}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRIM_SCRIPT="${SCRIPT_DIR}/trim_wine_trace.sh"
 
@@ -19,7 +55,7 @@ require_cmd() {
   fi
 }
 
-for dep in rg awk sed sort diff wc mkdir cut; do
+for dep in rg awk sed sort diff wc mkdir cut tr; do
   require_cmd "$dep"
 done
 
@@ -101,14 +137,23 @@ emit_checks() {
   local samp_window_file="${trim_dir}/samp_lifecycle_window.log"
   local call_file="${trim_dir}/call_focus.log"
   local focus_file="${trim_dir}/focus_lines.log"
+  local samp_module_base=""
+  local samp_module_pattern='[[:xdigit:]]+'
+
+  if [[ -f "${trim_dir}/samp_module_base.txt" ]]; then
+    samp_module_base="$(tr -d '\r\n' <"${trim_dir}/samp_module_base.txt")"
+  fi
+  if [[ "$samp_module_base" =~ ^[[:xdigit:]]+$ ]]; then
+    samp_module_pattern="$samp_module_base"
+  fi
 
   {
     printf "key\tseverity\tmin\tcount\tdescription\n"
     printf "samp_dll_loaded_native\tcritical\t1\t%s\tsamp.dll loaded as native module\n" "$(count_matches "$loaddll_file" 'Loaded L".*samp\.dll".*: native')"
     printf "samp_process_attach_start\tcritical\t1\t%s\tsamp.dll process_attach START marker\n" "$(count_matches "$samp_window_file" 'process_attach \(L"samp\.dll",00000000\) - START')"
     printf "samp_process_attach_end\tcritical\t1\t%s\tsamp.dll process_attach END marker\n" "$(count_matches "$samp_window_file" 'process_attach \(L"samp\.dll",00000000\) - END')"
-    printf "samp_process_attach_call\tcritical\t1\t%s\tsamp.dll DllMain PROCESS_ATTACH call\n" "$(count_matches "$samp_window_file" 'Call PE DLL \(proc=.*module=02380000 L"samp\.dll",reason=PROCESS_ATTACH')"
-    printf "samp_process_detach_call\tcritical\t1\t%s\tsamp.dll DllMain PROCESS_DETACH call\n" "$(count_matches "$samp_window_file" 'Call PE DLL \(proc=.*module=02380000 L"samp\.dll",reason=PROCESS_DETACH')"
+    printf "samp_process_attach_call\tcritical\t1\t%s\tsamp.dll DllMain PROCESS_ATTACH call\n" "$(count_matches "$samp_window_file" "Call PE DLL \\(proc=.*module=${samp_module_pattern} L\"samp\\.dll\",reason=PROCESS_ATTACH")"
+    printf "samp_process_detach_call\tcritical\t1\t%s\tsamp.dll DllMain PROCESS_DETACH call\n" "$(count_matches "$samp_window_file" "Call PE DLL \\(proc=.*module=${samp_module_pattern} L\"samp\\.dll\",reason=PROCESS_DETACH")"
     printf "ws2_32_dll_load\thigh\t1\t%s\tWS2_32.dll loaded\n" "$(count_matches "$loaddll_file" 'Loaded L".*WS2_32\.dll"')"
     printf "wsock32_dll_load\thigh\t1\t%s\tWSOCK32.dll loaded\n" "$(count_matches "$loaddll_file" 'Loaded L".*WSOCK32\.dll"')"
     printf "d3dx9_25_dll_load\tmedium\t0\t%s\td3dx9_25.dll loaded (external dependency, non-blocking)\n" "$(count_matches "$loaddll_file" 'Loaded L".*d3dx9_25\.dll"')"
@@ -211,3 +256,18 @@ echo "- ${OUT_DIR}/counts.diff"
 echo "- ${OUT_DIR}/reference_checks.tsv"
 echo "- ${OUT_DIR}/candidate_checks.tsv"
 echo "- ${OUT_DIR}/check_report.tsv"
+
+if [[ "$FAIL_COUNT" -gt 0 ]]; then
+  if [[ "$REPORT_ONLY" -eq 1 ]]; then
+    echo
+    echo "Result: FAIL (report-only; exit status suppressed)"
+    exit 0
+  fi
+  echo
+  echo "Result: FAIL"
+  echo "Use --report-only to generate a report without failing the command."
+  exit 5
+fi
+
+echo
+echo "Result: PASS"

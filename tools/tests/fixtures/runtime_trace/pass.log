@@ -1,0 +1,20 @@
+0001:trace:loaddll:build_module Loaded L"C:\\GTA San Andreas\\samp.dll" at 02380000: native
+0002:trace:module:process_attach (L"samp.dll",00000000) - START
+0003:Call PE DLL (proc=023811F0,module=02380000 L"samp.dll",reason=PROCESS_ATTACH,res=00000000)
+0004:trace:module:process_attach (L"samp.dll",00000000) - END
+0005:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\WS2_32.dll" at 76000000: builtin
+0006:trace:loaddll:build_module Loaded L"C:\\windows\\system32\\WSOCK32.dll" at 76100000: builtin
+0007:Call ws2_32.WSAStartup(0202,0012)
+0008:Call ws2_32.gethostbyname("server.invalid")
+0009:Call ws2_32.inet_addr("127.0.0.1")
+0010:Call ws2_32.inet_ntoa(0100007f)
+0011:Call ws2_32.sendto(00000100,00000200,32,0,00000300,16)
+0012:Call ws2_32.recvfrom(00000100,00000200,32,0,00000300,00000400)
+0013:Call user32.CallWindowProcA(00000100,00000200,0,0,0)
+0014:Call user32.SetWindowLongA(00000100,-4,00000200)
+0015:Call user32.CreateWindowExA(0,"STATIC","fixture",0,0,0,1,1,0,0,0,0)
+0016:Connecting to 127.0.0.1:7777...
+0017:Connected to 127.0.0.1:7777.
+0018:Call ws2_32.WSACleanup()
+0019:Call PE DLL (proc=023811F0,module=02380000 L"samp.dll",reason=PROCESS_DETACH,res=00000001)
+0020:trace:module:MODULE_InitDLL (02380000 L"samp.dll",PROCESS_DETACH,00000001) - END

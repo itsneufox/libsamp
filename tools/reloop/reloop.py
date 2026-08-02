@@ -247,6 +247,20 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def write_run_metadata(
+    artifact_dir: Path,
+    metadata: dict[str, Any],
+    settings: Settings,
+    profile: ClientProfile,
+) -> None:
+    metadata.update({
+        "dll_sha256": sha256(profile.samp_dll),
+        "built_dll_sha256": sha256(settings.built_dll),
+        "pawn_sha256": sha256(settings.pawn_output),
+    })
+    write_json(artifact_dir / "metadata.json", metadata)
+
+
 def append_event(path: Path, state: str, **details: Any) -> None:
     payload = {"time": utc_timestamp(), "state": state, **details}
     with path.open("a", encoding="utf-8") as handle:
@@ -817,11 +831,8 @@ def execute_run(
         "server_mode": server_mode,
         "client_mode": client_mode,
         "device_helper_path": str(profile.gta_root / settings.device_helper_filename),
-        "dll_sha256": sha256(profile.samp_dll),
-        "built_dll_sha256": sha256(settings.built_dll),
-        "pawn_sha256": sha256(settings.pawn_output),
     }
-    write_json(artifact_dir / "metadata.json", metadata)
+    write_run_metadata(artifact_dir, metadata, settings, profile)
     append_event(events, "PREPARE", artifact=str(artifact_dir), request=current_request)
 
     replace_existing_client(profile, client_mode, settings.shutdown_timeout_s)
@@ -831,6 +842,9 @@ def execute_run(
     if deploy and client_name == "replacement":
         append_event(events, "DEPLOY")
         deploy_replacement(settings, artifact_dir / "build")
+    # Build and deploy may have replaced every hashed artifact above. Persist
+    # the identities that will actually participate in this run.
+    write_run_metadata(artifact_dir, metadata, settings, profile)
     append_event(events, "DEVICE_HELPER_INSTALL")
     install_device_helper(settings, profile, artifact_dir / "build")
     if interaction:

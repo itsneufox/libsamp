@@ -2,10 +2,9 @@
 
 ## Status
 
-This document records a narrowly scoped `STATIC_037` pickup probe. The hook
-implementation and byte guards are built and source-tested, but no new
-original-R5 runtime trace has been collected yet. All field interpretations
-that require a live run therefore remain `TODO_VERIFY`.
+This document records a narrowly scoped pickup probe. Its ordinary type-1 path
+is now `OBSERVED_037 + PROBE_TRACE`; the type-14 and dropped branches remain
+`STATIC_037 + TODO_VERIFY`.
 
 Reference binaries:
 
@@ -14,9 +13,42 @@ Reference binaries:
 - GTA-SA 1.0 US `gta_sa.exe`
   SHA256 `a559aa772fd136379155efa71f00c47aad34bbfeae6196b0fe1047d0645cbd26`.
 
-The source module is `tools/asi_probe/src/samp_probe_pickup.c`. It changes no
-replacement behavior and is inactive unless the focused pickup profile is
-selected.
+The pool hook source module is `tools/asi_probe/src/samp_probe_pickup.c`; its
+RakClient observation hook is integrated in `samp_probe_asi.c`. Both remain
+inactive unless the focused pickup profile is selected.
+
+### Original-R5 golden result — 2026-08-02
+
+The first prepared run,
+`20260802-112137-distributed-sync-pickup-41774`, collected the server-side
+pickup event but correctly ended as analyzer `MISMATCH`: the probe had hooked
+RakClient vtable slot 26, the extended RPC overload, so it observed no nested
+outgoing RPC.
+
+Direct analysis of the supported R5 DLL then established that the call at
+`samp.dll+0x134DE` uses vtable slot 25, whose exact target is
+`samp.dll+0x34620` and whose ABI is the short six-argument BitStream overload.
+Slot 26 instead targets `samp.dll+0x345B0` and is the extended overload. The
+probe now guards both slot 25 and the exact `+0x34620` target. Corrected ASI
+SHA256:
+`d87fc3c7d91297dc87e1a38c8ec02e5dc4637f256d60a1f638d1c4dadecd7ca9`.
+
+The identical repeat run,
+`20260802-112802-distributed-sync-pickup-57189`, was assessed
+`OBSERVED_ORDINARY`:
+
+- both pickup hooks installed with the exact R5/GTA identities;
+- one ordinary slot-0 pickup, model 1240/type 1, used GTA handle generation 2
+  and raw index 0;
+- `PickedUp` sent RPC 131 with a signed 32-bit slot payload, priority 1,
+  reliability 9, channel 0, and successful return;
+- the notification timer changed from 0 to 15;
+- 160 `Process` calls followed the predicted seven-frame gate cadence;
+- the bounded ring reported no overflow, orphan RPC, or parse error.
+
+The fixture destroyed the ordinary pickup immediately after the server
+callback. It therefore did not cover the complete 15-tick countdown,
+type 14, a dropped pickup, pause behavior, RPC failure, or slot recreation.
 
 ## Static R5 findings
 
@@ -113,8 +145,10 @@ process call per seven caller invocations, not per rendered frame in every
 configuration.
 
 The probe records the raw gate value, GTA frame, process ordinal, elapsed
-milliseconds, and frame delta. A live run is still needed to confirm the
-caller cadence under the target frame limiter and pause states.
+milliseconds, and frame delta. The ordinary golden run observed all 160 calls
+at the predicted seven-frame spacing (approximately 125 to 141 ms in that
+fixture). Pause/unpause and other frame-limit configurations remain
+`TODO_VERIFY`.
 
 ## Probe contract
 
@@ -124,9 +158,10 @@ R5 and GTA-SA 1.0 US, with GTA loaded at its non-relocatable preferred base.
 A partial install restores every owned patch.
 
 The two method hooks call the original through fixed trampolines and publish
-only bounded snapshots to a 256-record ring. The existing outgoing RakClient
-vtable hook observes RPC 131 and RPC 97 after the original RPC call returns
-and publishes into the same event sequence. No hook performs file I/O.
+only bounded snapshots to a 256-record ring. The outgoing RakClient vtable
+hook observes RPC 131 and RPC 97 through guarded slot 25
+(`samp.dll+0x34620`) after the original short-overload call returns and
+publishes into the same event sequence. No hook performs file I/O.
 
 The worker emits:
 
@@ -138,7 +173,7 @@ The worker emits:
 The outgoing RakClient hook remains process-bound. Do not hot-unload the ASI
 while the game or network thread can execute an installed hook.
 
-## Activation and first golden run
+## Activation and remaining golden runs
 
 Build and deploy the ASI, stop GTA, then select:
 
@@ -146,7 +181,8 @@ Build and deploy the ASI, stop GTA, then select:
 tools/windows/remote_lab/samp_lab.sh probe-profile pickup-r5
 ```
 
-The first comparable original-R5 battery should create separate fixtures for:
+The ordinary type-1 fixture is complete. The remaining comparable
+original-R5 battery should create separate fixtures for:
 
 1. an ordinary pickup that is not immediately destroyed by the server;
 2. a type-14 pickup;
@@ -173,21 +209,26 @@ symptom only, not the new field-level claims.
 
 ## Replacement impact
 
-`STATIC_037 + TODO_VERIFY`: the current replacement helper
-`samp_raknet_client_send_pickup_notification` sends every RPC 131 using
-`RELIABLE_SEQUENCED`. That matches the R5 type-14 `Process` path but not the
-ordinary `CPickupPool::PickedUp` path, which uses `RELIABLE_ORDERED`.
-Replacement behavior is intentionally unchanged by this probe-only change.
-After the golden run confirms both outgoing values, the replacement should
-preserve the call-source distinction rather than using one QoS for both
-paths.
+`STATIC_037 + OBSERVED_037 + PROBE_TRACE`: the replacement now preserves the
+RPC 131 call-source distinction. Its ordinary GTA collection hook sends
+`RELIABLE_ORDERED` (numeric 9); the stored type-14 `Process` path sends
+`RELIABLE_SEQUENCED` (numeric 10). When the GTA collection hook is installed,
+generic processing no longer polls ordinary pickups through opcode `0x0214`.
+
+The replacement retains its prior wall-clock notification guards as a safety
+measure. They are not presented as original parity: the ordinary R5 path uses
+a 15-Process-call counter and the type-14 branch statically leaves that timer
+unchanged. Type-14 runtime behavior remains `TODO_VERIFY` before removing or
+retuning those guards.
 
 ## Evidence boundary
 
 - `STATIC_037`: RVAs, method ABI/tails, pool array offsets, branch structure,
   RPC IDs/payload widths/numeric QoS, timer value 15, and the `>5` caller gate.
-- `OBSERVED_037`: prior ordinary-pickup callback repetition described in the
-  linked 2026-07-26 trace.
-- `TODO_VERIFY`: live values, handle-generation relationship, exact cadence
-  under each FPS/pause state, RPC return behavior, and type-14/dropped pickup
-  state transitions.
+- `OBSERVED_037 + PROBE_TRACE`: the ordinary type-1 payload/QoS, successful
+  RPC result, `0->15` timer transition, handle/raw-index relationship for
+  generation 2/index 0, and seven-frame Process cadence in run
+  `20260802-112802-distributed-sync-pickup-57189`.
+- `TODO_VERIFY`: the complete 15-tick countdown under each FPS/pause state,
+  RPC-failure timer behavior, additional handle generations, and type-14 or
+  dropped-pickup state transitions.

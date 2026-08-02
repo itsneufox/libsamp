@@ -216,6 +216,12 @@ if(SAMPDLL_BUILD_TESTS)
 
   add_test(NAME gta_camera_aim_compat COMMAND test_gta_camera_aim_compat)
 
+  add_executable(test_custom_asset_bulk_compat
+    tests/test_custom_asset_bulk_compat.c
+  )
+
+  add_test(NAME custom_asset_bulk_compat COMMAND test_custom_asset_bulk_compat)
+
   add_executable(test_pickup_pool_compat
     tests/test_pickup_pool_compat.c
   )

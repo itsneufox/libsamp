@@ -137,7 +137,8 @@
 #define PROBE_SAMP_R5_PLAYER_PED_STOP_JETPACK_RVA 0x000acd60u
 #define PROBE_SAMP_R5_PLAYER_PED_IS_IN_JETPACK_RVA 0x000acdc0u
 #define PROBE_SAMP_R5_NETGAME_PTR_RVA 0x0026eb94u
-#define PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX 26u
+#define PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX 25u
+#define PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA 0x00034620u
 #define PROBE_SERVER_COMMAND_RPC 50u
 #define PROBE_DIALOG_RESPONSE_RPC 62u
 #define PROBE_PICKUP_RPC 131u
@@ -358,8 +359,8 @@ typedef char probe_assert_network_id_size[(sizeof(probe_raknet_network_id) == 8)
 typedef char probe_assert_trailer_sync_r5_size[(sizeof(probe_samp_trailer_sync_r5) == 54) ? 1 : -1];
 
 typedef BYTE(PROBE_THISCALL *probe_rakclient_rpc_bitstream_fn)(
-    void *, const BYTE *, probe_raknet_bitstream_prefix *, int, int, char, BYTE,
-    probe_raknet_network_id, probe_raknet_bitstream_prefix *);
+    void *, const BYTE *, probe_raknet_bitstream_prefix *, int, int, char,
+    BYTE);
 typedef HANDLE(WINAPI *probe_CreateFileA_fn)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
 typedef HANDLE(WINAPI *probe_CreateFileW_fn)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
 typedef BOOL(WINAPI *probe_ReadFile_fn)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
@@ -1068,8 +1069,8 @@ static void __cdecl hook_samp_rpc_edit_attached_object(probe_samp_rpc_parameters
 static void __cdecl hook_samp_rpc_edit_object(probe_samp_rpc_parameters_prefix *rpc);
 static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
     void *rakclient, const BYTE *rpc_id_ptr, probe_raknet_bitstream_prefix *bitstream,
-    int priority, int reliability, char ordering_channel, BYTE shift_timestamp,
-    probe_raknet_network_id network_id, probe_raknet_bitstream_prefix *reply_from_target);
+    int priority, int reliability, char ordering_channel,
+    BYTE shift_timestamp);
 static int install_dialog_menu_rpc_hook(int log_summary);
 static void __cdecl hook_samp_remove_object(void *entity);
 static void __cdecl hook_samp_remove_static(void *entity);
@@ -6694,8 +6695,8 @@ static void flush_aim_bullet_jetpack_trace_ring(void) {
 
 static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
     void *rakclient, const BYTE *rpc_id_ptr, probe_raknet_bitstream_prefix *bitstream,
-    int priority, int reliability, char ordering_channel, BYTE shift_timestamp,
-    probe_raknet_network_id network_id, probe_raknet_bitstream_prefix *reply_from_target) {
+    int priority, int reliability, char ordering_channel,
+    BYTE shift_timestamp) {
   BYTE result = 0;
   BYTE rpc_id = 0xffu;
   int bits = -1;
@@ -6768,11 +6769,10 @@ static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
       probe_log("dialog_menu_rpc: before rpc=%u name=ServerCommand caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d command_length=%d command='%s' priority=%d reliability=%d "
                 "channel=%d shift_timestamp=%u payload='%s' rakclient=%p bitstream=%p "
-                "network_local=%u reply=%p evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "overload=short evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, caller, samp_rva_from_address(caller), bits, bytes,
                 command_length, command, priority, reliability, (int)ordering_channel,
-                (unsigned)shift_timestamp, payload, rakclient, bitstream,
-                (unsigned)network_id.local_system_id, reply_from_target);
+                (unsigned)shift_timestamp, payload, rakclient, bitstream);
     } else if (rpc_id == PROBE_DIALOG_RESPONSE_RPC && bytes >= 6 &&
         memory_is_readable((uintptr_t)data, (size_t)bytes)) {
       short dialog_id;
@@ -6783,39 +6783,37 @@ static BYTE PROBE_THISCALL hook_rakclient_rpc_bitstream(
       probe_log("dialog_menu_rpc: before rpc=%u name=DialogResponse caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d dialog=%d response=%u list_item=%d input_length=%u "
                 "priority=%d reliability=%d channel=%d shift_timestamp=%u payload='%s' "
-                "rakclient=%p bitstream=%p network_local=%u reply=%p "
-                "evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "rakclient=%p bitstream=%p overload=short "
+                "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, caller, samp_rva_from_address(caller), bits, bytes,
                 (int)dialog_id, (unsigned)data[2], (int)list_item, input_length,
                 priority, reliability, (int)ordering_channel, (unsigned)shift_timestamp,
-                payload, rakclient, bitstream, (unsigned)network_id.local_system_id,
-                reply_from_target);
+                payload, rakclient, bitstream);
     } else if (rpc_id == PROBE_MENU_SELECT_RPC && bytes >= 1 &&
                memory_is_readable((uintptr_t)data, 1)) {
       probe_log("dialog_menu_rpc: before rpc=%u name=MenuSelect caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d row=%u priority=%d reliability=%d channel=%d "
                 "shift_timestamp=%u payload='%s' rakclient=%p bitstream=%p "
-                "network_local=%u reply=%p evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "overload=short evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, caller, samp_rva_from_address(caller), bits, bytes,
                 (unsigned)data[0], priority, reliability, (int)ordering_channel,
-                (unsigned)shift_timestamp, payload, rakclient, bitstream,
-                (unsigned)network_id.local_system_id, reply_from_target);
+                (unsigned)shift_timestamp, payload, rakclient, bitstream);
     } else if (dialog_focused) {
       probe_log("dialog_menu_rpc: before rpc=%u name=%s caller=%p caller_samp_rva=0x%08lx "
                 "bits=%d bytes=%d priority=%d reliability=%d channel=%d shift_timestamp=%u "
-                "payload='%s' rakclient=%p bitstream=%p network_local=%u reply=%p "
-                "evidence=OBSERVED_037,PROBE_TRACE,TODO_VERIFY",
+                "payload='%s' rakclient=%p bitstream=%p overload=short "
+                "evidence=STATIC_037,PROBE_TRACE,TODO_VERIFY",
                 (unsigned)rpc_id, rpc_id == PROBE_MENU_QUIT_RPC ? "MenuQuit" : "focused_invalid",
                 caller, samp_rva_from_address(caller), bits, bytes, priority, reliability,
                 (int)ordering_channel, (unsigned)shift_timestamp, payload, rakclient,
-                bitstream, (unsigned)network_id.local_system_id, reply_from_target);
+                bitstream);
     }
   }
 
   if (g_orig_rakclient_rpc_bitstream != NULL) {
     result = ((probe_rakclient_rpc_bitstream_fn)g_orig_rakclient_rpc_bitstream)(
         rakclient, rpc_id_ptr, bitstream, priority, reliability, ordering_channel,
-        shift_timestamp, network_id, reply_from_target);
+        shift_timestamp);
   }
   if (pickup_focused) {
     probe_pickup_observe_rpc(
@@ -6887,12 +6885,23 @@ static int install_dialog_menu_rpc_hook(int log_summary) {
   if (current == (void *)hook_rakclient_rpc_bitstream) {
     return 1;
   }
-  if (!address_in_samp(current)) {
+  /* STATIC_037:
+   * Ordinary R5 client RPC sends, including CPickupPool::PickedUp at
+   * samp.dll+0x13440, dispatch through vtable +0x64 (index 25).  That short
+   * BitStream overload is the six-stack-argument wrapper at +0x34620 and
+   * returns with `ret 0x18`.  Index 26/+0x68 is the distinct extended
+   * NetworkID/reply overload at +0x345B0 and cannot observe this call path. */
+  if (!address_in_samp(current) ||
+      samp_rva_from_address(current) !=
+          PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA) {
     if (log_summary) {
-      probe_log("%s: skip reason=slot_target_outside_samp rakclient=%p vtable=%p "
-                "index=%u target=%p",
+      probe_log("%s: skip reason=unexpected_short_bitstream_target "
+                "rakclient=%p vtable=%p index=%u target=%p "
+                "actual_samp_rva=0x%08lx expected_samp_rva=0x%08lx",
                 hook_log_name, rakclient, vtable,
-                (unsigned)PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX, current);
+                (unsigned)PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX, current,
+                samp_rva_from_address(current),
+                (unsigned long)PROBE_SAMP_R5_RAKCLIENT_RPC_BITSTREAM_RVA);
     }
     return 0;
   }
@@ -6918,7 +6927,7 @@ static int install_dialog_menu_rpc_hook(int log_summary) {
   (void)VirtualProtect(slot, sizeof(void *), old_protect, &restore_protect);
   probe_log("%s: installed netgame=%p rakclient=%p vtable=%p index=%u "
             "slot=%p original=%p original_samp_rva=0x%08lx replacement=%p "
-            "evidence=STATIC_037,TODO_VERIFY",
+            "overload=short evidence=STATIC_037,TODO_VERIFY",
             hook_log_name, (void *)(uintptr_t)netgame_value, rakclient, vtable,
             (unsigned)PROBE_RAKCLIENT_RPC_BITSTREAM_VTBL_INDEX, slot, current,
             samp_rva_from_address(current), (void *)hook_rakclient_rpc_bitstream);
